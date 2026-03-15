@@ -1813,50 +1813,15 @@ img, table, input, select, textarea, button{
 }
 
 
-/* ===============================
-   Cast form mobile-first tidy
-================================ */
-.cast-form-grid{
-  gap:12px 14px;
+/* === THEMIS Mobile Input Tidy === */
+.field.mini{
+  max-width:140px;
 }
 
-.cast-mini-grid{
-  display:grid;
-  grid-template-columns:160px 160px;
-  gap:12px;
-  align-items:end;
-}
-
-.cast-mini-grid .mini-field{
-  max-width:160px;
-}
-
-.cast-mini-grid .mini-field input{
-  text-align:left;
-}
-
-@media (max-width: 900px){
-  .cast-mini-grid{
-    grid-template-columns:1fr 1fr;
-    gap:10px;
-  }
-
-  .cast-mini-grid .mini-field{
+@media (max-width:900px){
+  .field.mini{
     max-width:none;
-  }
-}
-
-@media (max-width: 480px){
-  .cast-mini-grid{
-    grid-template-columns:1fr 1fr;
-  }
-
-  .cast-mini-grid .mini-field input{
-    padding:11px 10px;
-  }
-
-  .cast-mini-grid .mini-field label{
-    font-size:12px;
-    line-height:1.35;
+    width:48%;
+    display:inline-block;
   }
 }
