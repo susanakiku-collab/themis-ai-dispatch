@@ -334,50 +334,68 @@
 
       <!-- 当日運用 -->
 <section id="dailyTab" class="page-panel">
-  <section class="panel-card">
-    <div class="daily-header-row">
-      <h2>当日運用</h2>
-      <div class="daily-top-actions">
-        <div class="field compact">
-          <label for="dispatchDate">日付：</label>
+  <section class="panel-card daily-ops-card">
+    <div class="daily-header-row daily-mobile-stack">
+      <div>
+        <h2>当日運用</h2>
+        <p class="daily-lead">スマホで見やすく、押しやすく、配車の流れが追いやすい当日運用画面です。</p>
+      </div>
+      <div class="daily-top-actions daily-top-actions-grid">
+        <div class="field compact daily-date-field">
+          <label for="dispatchDate">日付</label>
           <input id="dispatchDate" type="date" />
         </div>
-        <button id="optimizeBtn" class="btn primary">自動配車</button>
-        <button id="confirmDailyBtn" class="btn ghost">確定（月間へ反映）</button>
-        <button id="clearActualBtn" class="btn danger">Actual全消去</button>
-        <button id="checkAllVehiclesBtn" class="btn ghost">全選択</button>
-        <button id="uncheckAllVehiclesBtn" class="btn danger">全解除</button>
-        <button id="clearManualLastVehicleBtn" class="btn ghost">ラスト便車両解除</button>
+        <div class="daily-action-group daily-action-group-primary">
+          <button id="optimizeBtn" class="btn primary">自動配車</button>
+          <button id="confirmDailyBtn" class="btn ghost">確定（月間へ反映）</button>
+          <button id="copyResultBtn" class="btn ghost">結果をコピー</button>
+          <button id="sendLineBtn" class="btn primary">LINE送信</button>
+        </div>
+        <div class="daily-action-group daily-action-group-secondary">
+          <button id="checkAllVehiclesBtn" class="btn ghost">全選択</button>
+          <button id="uncheckAllVehiclesBtn" class="btn danger">全解除</button>
+          <button id="clearManualLastVehicleBtn" class="btn ghost">ラスト便車両解除</button>
+          <button id="clearActualBtn" class="btn danger">Actual全消去</button>
+        </div>
       </div>
     </div>
 
-    <div class="daily-vehicles-block">
-      <h3>本日使用する車両（出勤車）</h3>
-      <div id="dailyVehicleChecklist" class="vehicle-checklist"></div>
-      <div id="manualLastVehicleInfo" class="muted" style="margin-top:10px;">ラスト便車両: なし</div>
+    <div class="daily-vehicles-block daily-section-card">
+      <div class="section-title-row">
+        <h3>本日使用する車両（出勤車）</h3>
+        <span class="chip">出勤 / ラスト便 をその場で設定</span>
+      </div>
+      <div id="dailyVehicleChecklist" class="vehicle-checklist vehicle-checklist-cards"></div>
+      <div id="manualLastVehicleInfo" class="muted daily-inline-status">ラスト便車両: なし</div>
     </div>
 
     <div class="divider"></div>
 
-    <div class="result-head-row">
-      <h3>配車結果</h3>
-      <div class="action-row">
-        <button id="copyResultBtn" class="btn ghost">結果をコピー</button>
-        <button id="sendLineBtn" class="btn primary">LINE送信</button>
+    <div class="result-head-row section-title-row">
+      <div>
+        <h3>配車結果</h3>
+        <p class="section-subtitle">戻り / 次便可能 / 累計を見ながら、スマホでも縦に追える配車カード表示</p>
       </div>
     </div>
 
-    <div id="dailyDispatchResult" class="dispatch-result-cards"></div>
+    <div id="dailyDispatchResult" class="dispatch-result-cards dispatch-result-cards-mobile"></div>
 
     <div class="divider"></div>
 
-    <div class="daily-vehicles-block">
-      <h3>車両別 日次走行距離入力</h3>
-      <div id="dailyMileageInputs" class="daily-mileage-list"></div>
-      <div class="action-row">
-        <button id="saveDailyMileageBtn" class="btn primary">日次走行距離を保存</button>
+    <details class="daily-mileage-panel" id="dailyMileagePanel">
+      <summary>
+        <div>
+          <strong>車両別 日次走行距離入力</strong>
+          <span>必要な時だけ開く</span>
+        </div>
+      </summary>
+      <div class="daily-mileage-panel-body">
+        <div id="dailyMileageInputs" class="daily-mileage-list"></div>
+        <div class="action-row daily-mileage-actions">
+          <button id="saveDailyMileageBtn" class="btn primary">日次走行距離を保存</button>
+        </div>
       </div>
-    </div>
+    </details>
   </section>
 </section>
 
