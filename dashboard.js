@@ -4946,32 +4946,21 @@ function renderDailyVehicleChecklist() {
   }
 
   allVehiclesCache.forEach(vehicle => {
-    const isActive = activeVehicleIdsForToday.has(Number(vehicle.id));
-    const isLastTrip = isDriverLastTripChecked(vehicle.id);
     const row = document.createElement("div");
-    row.className = `vehicle-check-item vehicle-check-card ${isActive ? "is-active" : ""} ${isLastTrip ? "is-last-trip" : ""}`;
+    row.className = "vehicle-check-item";
     row.innerHTML = `
-      <div class="vehicle-check-card-main">
-        <div class="vehicle-check-card-head">
-          <div>
-            <div class="vehicle-check-driver">${escapeHtml(vehicle.driver_name || vehicle.plate_number || "-")}</div>
-            <div class="vehicle-check-plate">車両 ${escapeHtml(vehicle.plate_number || "-")}</div>
-          </div>
-          <div class="vehicle-check-badges">
-            <span class="metric-badge">担当 ${escapeHtml(normalizeAreaLabel(vehicle.vehicle_area || "-"))}</span>
-            <span class="metric-badge">帰宅 ${escapeHtml(normalizeAreaLabel(vehicle.home_area || "-"))}</span>
-            <span class="metric-badge">定員 ${vehicle.seat_capacity ?? "-"}</span>
-          </div>
-        </div>
-      </div>
-      <div class="vehicle-check-card-actions">
-        <label class="toggle-chip ${isActive ? "is-on" : ""}">
-          <input class="vehicle-check-input" type="checkbox" data-id="${vehicle.id}" ${isActive ? "checked" : ""} />
-          <span>出勤</span>
+      <div class="vehicle-check-label">
+       ${escapeHtml(vehicle.driver_name || "-")}
+      （${escapeHtml(normalizeAreaLabel(vehicle.vehicle_area || "-"))} / 帰宅:${escapeHtml(normalizeAreaLabel(vehicle.home_area || "-"))} / 定員${vehicle.seat_capacity ?? "-"}）
+     </div>
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <label style="display:inline-flex; align-items:center; gap:6px; color:#e8eef9; font-size:13px;">
+          <input class="vehicle-check-input" type="checkbox" data-id="${vehicle.id}" ${activeVehicleIdsForToday.has(Number(vehicle.id)) ? "checked" : ""} />
+          出勤
         </label>
-        <label class="toggle-chip toggle-chip-warn ${isLastTrip ? "is-on" : ""}">
-          <input class="driver-last-trip-input" type="checkbox" data-id="${vehicle.id}" ${isLastTrip ? "checked" : ""} />
-          <span>ラスト便</span>
+        <label style="display:inline-flex; align-items:center; gap:6px; color:#ffdf8c; font-size:13px; font-weight:700;">
+          <input class="driver-last-trip-input" type="checkbox" data-id="${vehicle.id}" ${isDriverLastTripChecked(vehicle.id) ? "checked" : ""} />
+          ラスト便
         </label>
       </div>
     `;
@@ -5020,17 +5009,6 @@ function toggleAllVehicles(checked) {
   renderDailyVehicleChecklist();
   renderDailyMileageInputs();
   renderDailyDispatchResult();
-}
-
-function buildDispatchMetaChips(chips = []) {
-  return `
-    <div class="dispatch-meta-chips">
-      ${chips
-        .filter(chip => chip && chip.value !== null && chip.value !== undefined && chip.value !== "")
-        .map(chip => `<span class="metric-badge dispatch-meta-chip ${escapeHtml(chip.className || "")}">${escapeHtml(chip.label)} ${escapeHtml(String(chip.value))}</span>`)
-        .join("")}
-    </div>
-  `;
 }
 
 
@@ -7200,52 +7178,40 @@ function renderDailyDispatchResult() {
       .map(({ vehicle, rows, orderedRows }) => {
         const summary = getVehicleDailySummary(vehicle, orderedRows);
         const forecast = getVehicleRotationForecastSafe(vehicle, orderedRows);
+        const lineLabel = buildVehicleLineLabel(vehicle);
         const projectedMonthly = getVehicleProjectedMonthlyDistance(vehicle.id, monthlyMap, orderedRows);
-        const vehicleStateBadges = [
-          isManualLastVehicle(vehicle.id) ? `<span class="badge-status assigned">手動ラスト便車両</span>` : "",
-          isDriverLastTripChecked(vehicle.id) ? `<span class="badge-status assigned">ラスト便チェック</span>` : ""
-        ].filter(Boolean).join("");
 
         const body = orderedRows.length
           ? orderedRows
               .map(
                 (row, index) => `
-                  <div class="dispatch-row dispatch-row-vertical">
-                    <div class="dispatch-row-top">
-                      <div class="dispatch-left dispatch-left-stack">
-                        <div class="dispatch-row-badges">
-                          <span class="badge-time">${escapeHtml(getHourLabel(row.actual_hour))}</span>
-                          <span class="badge-order">順番 ${index + 1}</span>
-                          ${isManualLastTripItem(row) ? `<span class="badge-status assigned">ラスト便</span>` : ""}
-                        </div>
-                        <div class="dispatch-main-info">
-                          <span class="dispatch-name">${buildMapLinkHtml({
-                            name: row.casts?.name,
-                            address: row.destination_address || row.casts?.address,
-                            lat: row.casts?.latitude,
-                            lng: row.casts?.longitude,
-                            className: "dispatch-name-link"
-                          })}</span>
-                          <span class="dispatch-area">${escapeHtml(normalizeAreaLabel(row.destination_area || "-"))}</span>
-                        </div>
-                      </div>
-                      <div class="dispatch-distance dispatch-distance-strong">${Number(row.distance_km || 0).toFixed(1)}km</div>
+                  <div class="dispatch-row">
+                    <div class="dispatch-left">
+                      <span class="badge-time">${escapeHtml(getHourLabel(row.actual_hour))}</span>
+                      <span class="badge-order">順番 ${index + 1}</span>
+                      <span class="dispatch-name">${buildMapLinkHtml({
+                        name: row.casts?.name,
+                        address: row.destination_address || row.casts?.address,
+                        lat: row.casts?.latitude,
+                        lng: row.casts?.longitude,
+                        className: "dispatch-name-link"
+                      })}</span>
+                      <span class="dispatch-area">${escapeHtml(normalizeAreaLabel(row.destination_area || "-"))}</span>
+                      ${isManualLastTripItem(row) ? `<span class="badge-status assigned">ラスト便</span>` : ""}
                     </div>
-                    <div class="dispatch-row-bottom">
-                      <label class="dispatch-select-wrap">
-                        <span class="dispatch-select-label">担当車両</span>
-                        <select class="dispatch-vehicle-select" data-item-id="${row.id}">
-                          ${vehicles
-                            .map(
-                              v => `
-                                <option value="${v.id}" ${Number(v.id) === Number(vehicle.id) ? "selected" : ""}>
-                                  ${escapeHtml(v.driver_name || v.plate_number || "-")}
-                                </option>
-                              `
-                            )
-                            .join("")}
-                        </select>
-                      </label>
+                    <div class="dispatch-right">
+                      <div class="dispatch-distance">${Number(row.distance_km || 0).toFixed(1)}km</div>
+                      <select class="dispatch-vehicle-select" data-item-id="${row.id}">
+                        ${vehicles
+                          .map(
+                            v => `
+                              <option value="${v.id}" ${Number(v.id) === Number(vehicle.id) ? "selected" : ""}>
+                                 ${escapeHtml(v.driver_name || v.plate_number || "-")}
+                              </option>
+                            `
+                          )
+                          .join("")}
+                      </select>
                     </div>
                   </div>
                 `
@@ -7253,39 +7219,48 @@ function renderDailyDispatchResult() {
               .join("")
           : `<div class="empty-vehicle-text">送りなし</div>`;
 
-        const metaHtml = buildDispatchMetaChips([
-          orderedRows.length ? { label: "戻り", value: forecast.returnAfterLabel } : null,
-          orderedRows.length ? { label: "次便可能", value: forecast.predictedReadyTime, className: "chip-primary" } : null,
-          { label: "累計距離", value: `${summary.totalKm.toFixed(1)}km` },
-          { label: "累計時間", value: formatMinutesAsJa(summary.driveMinutes) },
-          { label: "累計件数", value: `${summary.jobCount}件` },
-          { label: "月間見込", value: `${projectedMonthly.toFixed(1)}km` },
-          forecast.extraSharedDelayMinutes > 0 ? { label: "同乗追加遅延", value: `${forecast.extraSharedDelayMinutes}分`, className: "chip-warn" } : null
-        ]);
-
         return `
-          <div class="vehicle-result-card vehicle-result-card-mobile">
-            <div class="vehicle-result-head vehicle-result-head-stack">
-              <div class="vehicle-result-title vehicle-result-title-stack">
-                <div class="vehicle-result-topline">
-                  <h4>${escapeHtml(vehicle.driver_name || vehicle.plate_number || "-")}</h4>
-                  <div class="vehicle-result-state-badges">${vehicleStateBadges}</div>
-                </div>
+          <div class="vehicle-result-card">
+            <div class="vehicle-result-head">
+              <div class="vehicle-result-title">
+                <h4>
+                  ${escapeHtml(vehicle.driver_name || vehicle.plate_number || "-")}
+                  ${isManualLastVehicle(vehicle.id) ? `<span class="badge-status assigned" style="margin-left:8px;">手動ラスト便車両</span>` : ""}
+                  ${isDriverLastTripChecked(vehicle.id) ? `<span class="badge-status assigned" style="margin-left:8px;">ラスト便チェック</span>` : ""}
+                </h4>
                 <div class="vehicle-result-meta">
-                  <span>担当 ${escapeHtml(normalizeAreaLabel(vehicle.vehicle_area || "-"))}</span>
-                  <span>帰宅 ${escapeHtml(normalizeAreaLabel(vehicle.home_area || "-"))}</span>
-                  <span>定員 ${vehicle.seat_capacity ?? "-"}</span>
+                  ${escapeHtml(normalizeAreaLabel(vehicle.vehicle_area || "-"))}
+                  / 帰宅:${escapeHtml(normalizeAreaLabel(vehicle.home_area || "-"))}
+                  / 定員${vehicle.seat_capacity ?? "-"}
+                  ${isDriverLastTripChecked(vehicle.id) ? `/ ラスト便対象` : ""}
                 </div>
               </div>
-              <div class="vehicle-result-badges vehicle-result-badges-mobile">
+              <div class="vehicle-result-badges">
                 <span class="metric-badge">人数 ${rows.length}</span>
                 <span class="metric-badge">累計距離 ${summary.totalKm.toFixed(1)}km</span>
                 <span class="metric-badge">累計時間 ${escapeHtml(formatMinutesAsJa(summary.driveMinutes))}</span>
                 <span class="metric-badge">累計件数 ${summary.jobCount}件</span>
               </div>
             </div>
-            <div class="vehicle-result-body vehicle-result-body-mobile">${body}</div>
-            <div class="dispatch-meta dispatch-meta-mobile">${metaHtml}</div>
+            <div class="vehicle-result-body">${body}</div>
+            ${orderedRows.length ? `
+              <div class="dispatch-meta" style="margin-top:10px; font-size:12px; color:#9aa3b2; line-height:1.8;">
+                戻り ${escapeHtml(forecast.returnAfterLabel)}
+                / 次便可能 ${escapeHtml(forecast.predictedReadyTime)}
+                / 累計距離 ${summary.totalKm.toFixed(1)}km
+                / 累計時間 ${escapeHtml(formatMinutesAsJa(summary.driveMinutes))}
+                / 累計件数 ${summary.jobCount}件
+                / 月間見込 ${projectedMonthly.toFixed(1)}km
+                ${forecast.extraSharedDelayMinutes > 0 ? `/ 同乗追加遅延 ${forecast.extraSharedDelayMinutes}分` : ""}
+              </div>
+            ` : `
+              <div class="dispatch-meta" style="margin-top:10px; font-size:12px; color:#9aa3b2; line-height:1.8;">
+                累計距離 ${summary.totalKm.toFixed(1)}km
+                / 累計時間 ${escapeHtml(formatMinutesAsJa(summary.driveMinutes))}
+                / 累計件数 ${summary.jobCount}件
+                / 月間見込 ${projectedMonthly.toFixed(1)}km
+              </div>
+            `}
           </div>
         `;
       })
@@ -7952,54 +7927,47 @@ function renderDailyMileageInputs() {
     );
 
     const row = document.createElement("div");
-    row.className = "daily-mileage-row daily-mileage-card";
+    row.className = "daily-mileage-row";
     row.innerHTML = `
-      <div class="daily-mileage-card-head">
-        <div>
-          <div class="daily-mileage-label">${escapeHtml(vehicle.driver_name || vehicle.plate_number || "-")}</div>
-          <div class="daily-mileage-sub">
-            車両 ${escapeHtml(vehicle.plate_number || "-")} / 帰宅:${escapeHtml(normalizeAreaLabel(vehicle.home_area || "-"))}
-          </div>
-        </div>
-        <div class="vehicle-result-badges">
-          <span class="metric-badge">担当 ${escapeHtml(normalizeAreaLabel(vehicle.vehicle_area || "-"))}</span>
+      <div>
+        <div class="daily-mileage-label">${escapeHtml(vehicle.plate_number || "-")}</div>
+        <div class="daily-mileage-sub">
+          ${escapeHtml(vehicle.driver_name || "-")} / 帰宅:${escapeHtml(normalizeAreaLabel(vehicle.home_area || "-"))}
         </div>
       </div>
 
-      <div class="daily-mileage-card-grid">
-        <div class="field">
-          <label>入力日</label>
-          <input
-            type="date"
-            class="daily-mileage-date-input"
-            data-vehicle-id="${vehicle.id}"
-            value="${existing?.report_date || defaultDate}"
-          />
-        </div>
+      <div class="field">
+        <label>入力日</label>
+        <input
+          type="date"
+          class="daily-mileage-date-input"
+          data-vehicle-id="${vehicle.id}"
+          value="${existing?.report_date || defaultDate}"
+        />
+      </div>
 
-        <div class="field">
-          <label>実績走行距離(km)</label>
-          <input
-            type="number"
-            step="0.1"
-            min="0"
-            class="daily-mileage-input"
-            data-vehicle-id="${vehicle.id}"
-            value="${existing?.distance_km ?? ""}"
-            placeholder="例：72.5"
-          />
-        </div>
+      <div class="field">
+        <label>実績走行距離(km)</label>
+        <input
+          type="number"
+          step="0.1"
+          min="0"
+          class="daily-mileage-input"
+          data-vehicle-id="${vehicle.id}"
+          value="${existing?.distance_km ?? ""}"
+          placeholder="例：72.5"
+        />
+      </div>
 
-        <div class="field field-full">
-          <label>メモ</label>
-          <input
-            type="text"
-            class="daily-mileage-note-input"
-            data-vehicle-id="${vehicle.id}"
-            value="${escapeHtml(existing?.note || "")}"
-            placeholder="任意"
-          />
-        </div>
+      <div class="field">
+        <label>メモ</label>
+        <input
+          type="text"
+          class="daily-mileage-note-input"
+          data-vehicle-id="${vehicle.id}"
+          value="${escapeHtml(existing?.note || "")}"
+          placeholder="任意"
+        />
       </div>
     `;
     els.dailyMileageInputs.appendChild(row);
