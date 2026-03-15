@@ -1,2 +1,2 @@
 # themis-ai-dispatch
-#v5.3 stable
+#v6.0.0 stable
