@@ -1694,3 +1694,428 @@ img, table, input, select, textarea, button{
 .geo-status.success{color:#7be2ab;border-color:rgba(47,191,122,.55);background:rgba(47,191,122,.10);}
 .geo-status.error{color:#ffb4b4;border-color:rgba(224,82,82,.55);background:rgba(224,82,82,.10);}
 .geo-status.manual{color:#ffd782;border-color:rgba(255,195,0,.45);background:rgba(255,195,0,.08);}
+
+/* =========================================
+   v6.4.5 mobile daily ops refresh
+   ========================================= */
+.daily-ops-card{
+  padding-bottom:18px;
+}
+
+.daily-mobile-stack{
+  align-items:stretch;
+}
+
+.daily-lead,
+.section-subtitle{
+  margin:6px 0 0;
+  color:#b9c7da;
+  font-size:13px;
+  line-height:1.7;
+}
+
+.daily-top-actions-grid{
+  display:grid;
+  gap:12px;
+  width:100%;
+}
+
+.daily-date-field{
+  max-width:240px;
+}
+
+.daily-action-group{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+}
+
+.daily-action-group .btn{
+  min-width:160px;
+}
+
+.daily-section-card{
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:18px;
+  padding:14px;
+  background:rgba(255,255,255,.02);
+}
+
+.section-title-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+  flex-wrap:wrap;
+}
+
+.daily-inline-status{
+  margin-top:12px;
+}
+
+.vehicle-checklist-cards{
+  grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));
+  gap:12px;
+}
+
+.vehicle-check-card{
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:18px;
+  background:rgba(255,255,255,.03);
+  padding:14px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+
+.vehicle-check-card.is-active{
+  border-color:rgba(47,109,246,.55);
+  box-shadow:0 0 0 1px rgba(47,109,246,.18) inset;
+}
+
+.vehicle-check-card.is-last-trip{
+  background:linear-gradient(180deg, rgba(255,214,102,.08), rgba(255,255,255,.03));
+}
+
+.vehicle-check-card-head{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+
+.vehicle-check-driver{
+  font-size:16px;
+  font-weight:800;
+  color:#fff;
+}
+
+.vehicle-check-plate{
+  margin-top:3px;
+  color:#b9c7da;
+  font-size:12px;
+}
+
+.vehicle-check-badges,
+.vehicle-result-state-badges{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.vehicle-check-card-actions{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.toggle-chip{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  min-height:40px;
+  padding:8px 12px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.03);
+  cursor:pointer;
+  color:#eef4ff;
+  font-size:13px;
+  font-weight:700;
+}
+
+.toggle-chip input{
+  width:18px;
+  height:18px;
+  margin:0;
+}
+
+.toggle-chip.is-on{
+  border-color:rgba(47,109,246,.75);
+  background:rgba(47,109,246,.16);
+}
+
+.toggle-chip-warn.is-on{
+  border-color:rgba(255,214,102,.58);
+  background:rgba(255,214,102,.12);
+  color:#ffe8a6;
+}
+
+.vehicle-result-card-mobile{
+  padding:14px;
+}
+
+.vehicle-result-head-stack,
+.vehicle-result-title-stack{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.vehicle-result-topline{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.vehicle-result-meta{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.vehicle-result-meta span{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:4px 10px;
+  border-radius:999px;
+  background:rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.08);
+}
+
+.vehicle-result-badges-mobile{
+  margin-top:2px;
+}
+
+.vehicle-result-body-mobile{
+  margin-top:10px;
+}
+
+.dispatch-row-vertical{
+  grid-template-columns:1fr;
+  gap:10px;
+  padding:14px 0;
+}
+
+.dispatch-row-top{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:12px;
+}
+
+.dispatch-left-stack{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:8px;
+}
+
+.dispatch-row-badges{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.dispatch-main-info{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.dispatch-distance-strong{
+  font-weight:800;
+  font-size:14px;
+  color:#dfeaff;
+}
+
+.dispatch-row-bottom{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+}
+
+.dispatch-select-wrap{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  width:100%;
+}
+
+.dispatch-select-label{
+  color:#b9c7da;
+  font-size:12px;
+  font-weight:700;
+}
+
+.dispatch-meta-mobile{
+  margin-top:12px;
+}
+
+.dispatch-meta-chips{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.dispatch-meta-chip{
+  background:rgba(255,255,255,.04);
+}
+
+.dispatch-meta-chip.chip-primary{
+  background:rgba(47,109,246,.16);
+  border-color:rgba(47,109,246,.42);
+}
+
+.dispatch-meta-chip.chip-warn{
+  background:rgba(255,214,102,.12);
+  border-color:rgba(255,214,102,.32);
+}
+
+.daily-mileage-panel{
+  margin-top:8px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:18px;
+  background:rgba(255,255,255,.02);
+  overflow:hidden;
+}
+
+.daily-mileage-panel summary{
+  list-style:none;
+  cursor:pointer;
+  padding:14px 16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+
+.daily-mileage-panel summary::-webkit-details-marker{
+  display:none;
+}
+
+.daily-mileage-panel summary div{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.daily-mileage-panel summary span{
+  color:#b9c7da;
+  font-size:12px;
+}
+
+.daily-mileage-panel summary::after{
+  content:"開く";
+  color:#b9c7da;
+  font-size:12px;
+}
+
+.daily-mileage-panel[open] summary::after{
+  content:"閉じる";
+}
+
+.daily-mileage-panel-body{
+  padding:0 16px 16px;
+}
+
+.daily-mileage-list{
+  display:grid;
+  gap:12px;
+}
+
+.daily-mileage-card{
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:16px;
+  background:rgba(255,255,255,.03);
+  padding:14px;
+}
+
+.daily-mileage-card-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:12px;
+}
+
+.daily-mileage-label{
+  font-weight:800;
+  color:#fff;
+}
+
+.daily-mileage-sub{
+  margin-top:4px;
+  color:#b9c7da;
+  font-size:12px;
+}
+
+.daily-mileage-card-grid{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:12px;
+}
+
+.field-full{
+  grid-column:1 / -1;
+}
+
+.daily-mileage-actions{
+  margin-top:12px;
+}
+
+@media (max-width: 900px){
+  .daily-top-actions-grid{
+    gap:10px;
+  }
+
+  .daily-date-field{
+    max-width:none;
+  }
+
+  .daily-action-group{
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+  }
+
+  .daily-action-group .btn{
+    width:100%;
+    min-width:0;
+  }
+
+  .vehicle-checklist-cards{
+    grid-template-columns:1fr;
+  }
+
+  .dispatch-row-top,
+  .daily-mileage-card-head,
+  .vehicle-result-topline{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+
+  .dispatch-row-bottom{
+    justify-content:stretch;
+  }
+
+  .daily-mileage-card-grid{
+    grid-template-columns:1fr;
+  }
+}
+
+@media (max-width: 640px){
+  .daily-action-group{
+    grid-template-columns:1fr;
+  }
+
+  .section-title-row{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+
+  .dispatch-meta-chips,
+  .vehicle-result-meta,
+  .vehicle-result-badges-mobile,
+  .vehicle-check-badges,
+  .vehicle-result-state-badges{
+    gap:6px;
+  }
+
+  .vehicle-result-card-mobile,
+  .vehicle-check-card,
+  .daily-mileage-card{
+    padding:12px;
+  }
+}
