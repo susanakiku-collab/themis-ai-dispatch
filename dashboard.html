@@ -335,13 +335,15 @@
       <!-- 当日運用 -->
 <section id="dailyTab" class="page-panel">
   <section class="panel-card">
-    <div class="daily-header-row daily-header-row-mobile">
-      <h2>当日運用</h2>
-      <div class="daily-top-actions daily-top-actions-compact">
-        <div class="field compact daily-date-field">
+    <div class="daily-header-wrap">
+      <div class="daily-header-top">
+        <h2>当日運用</h2>
+        <div class="field compact daily-date-field daily-date-inline">
           <label for="dispatchDate">日付</label>
           <input id="dispatchDate" type="date" />
         </div>
+      </div>
+      <div class="daily-top-actions daily-top-actions-compact">
         <button id="optimizeBtn" class="btn primary">AI配車</button>
         <button id="copyResultBtn" class="btn ghost">結果をコピー</button>
         <button id="checkAllVehiclesBtn" class="btn ghost">全選択</button>
