@@ -335,23 +335,19 @@
       <!-- 当日運用 -->
 <section id="dailyTab" class="page-panel">
   <section class="panel-card">
-    <div class="daily-header-wrap">
-      <div class="daily-header-top">
-        <h2>当日運用</h2>
-        <div class="field compact daily-date-field daily-date-inline">
-          <label for="dispatchDate">日付</label>
+    <div class="daily-header-row">
+      <h2>当日運用</h2>
+      <div class="daily-top-actions">
+        <div class="field compact">
+          <label for="dispatchDate">日付：</label>
           <input id="dispatchDate" type="date" />
         </div>
-      </div>
-      <div class="daily-top-actions daily-top-actions-compact">
-        <button id="optimizeBtn" class="btn primary">AI配車</button>
-        <button id="copyResultBtn" class="btn ghost">結果をコピー</button>
+        <button id="optimizeBtn" class="btn primary">自動配車</button>
+        <button id="confirmDailyBtn" class="btn ghost">確定（月間へ反映）</button>
+        <button id="clearActualBtn" class="btn danger">Actual全消去</button>
         <button id="checkAllVehiclesBtn" class="btn ghost">全選択</button>
         <button id="uncheckAllVehiclesBtn" class="btn danger">全解除</button>
-        <button id="sendLineBtn" class="btn primary">LINE送信</button>
         <button id="clearManualLastVehicleBtn" class="btn ghost">ラスト便車両解除</button>
-        <button id="clearActualBtn" class="btn danger">Actual全消去</button>
-        <button id="confirmDailyBtn" class="btn ghost">確定（月間へ反映）</button>
       </div>
     </div>
 
@@ -363,21 +359,25 @@
 
     <div class="divider"></div>
 
-    <div class="result-head-row result-head-row-simple">
+    <div class="result-head-row">
       <h3>配車結果</h3>
+      <div class="action-row">
+        <button id="copyResultBtn" class="btn ghost">結果をコピー</button>
+        <button id="sendLineBtn" class="btn primary">LINE送信</button>
+      </div>
     </div>
 
     <div id="dailyDispatchResult" class="dispatch-result-cards"></div>
 
     <div class="divider"></div>
 
-    <div class="daily-vehicles-block">
-      <h3>車両別 日次走行距離入力</h3>
+    <details class="daily-vehicles-block">
+      <summary style="cursor:pointer;font-weight:700;margin-bottom:8px;">車両別 日次走行距離入力（業務終了時）</summary>
       <div id="dailyMileageInputs" class="daily-mileage-list"></div>
       <div class="action-row">
         <button id="saveDailyMileageBtn" class="btn primary">日次走行距離を保存</button>
       </div>
-    </div>
+    </details>
   </section>
 </section>
 
