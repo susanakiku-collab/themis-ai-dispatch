@@ -5712,6 +5712,45 @@ function optimizeAssignments(items, vehicles, monthlyMap) {
     return roundTripMinutes >= LONG_BUNDLE_ROUND_TRIP_MINUTES && bundleScore >= 70;
   }
 
+  function isObviousAreaMismatch(targetArea, existingAreas = []) {
+    const target = normalizeAreaLabel(targetArea);
+    const areas = Array.isArray(existingAreas) ? existingAreas.filter(Boolean).map(normalizeAreaLabel) : [];
+    if (!target || target === "無し" || !areas.length) return false;
+    if (hasHardReverseMix(target, areas)) return true;
+
+    const targetCanonical = getCanonicalArea(target);
+    const targetGroup = getAreaDisplayGroup(target);
+    const sameCanonical = areas.some(area => {
+      const canonical = getCanonicalArea(area);
+      return canonical && targetCanonical && canonical === targetCanonical;
+    });
+    if (sameCanonical) return false;
+
+    const sameGroup = areas.some(area => getAreaDisplayGroup(area) === targetGroup);
+    if (sameGroup) return false;
+
+    const bestBundle = getBundleCompatibilityScore(target, areas);
+    const bestAffinity = Math.max(...areas.map(area => getAreaAffinityScore(target, area)), 0);
+    const bestDirection = Math.max(...areas.map(area => getDirectionAffinityScore(target, area)), -999);
+    const routeFlow = getRouteFlowVehicleScore(target, areas, "");
+
+    if (bestBundle >= 90) return false;
+    if (bestAffinity >= 78 && bestDirection >= 28) return false;
+    if (routeFlow >= 95 && bestDirection >= 28) return false;
+
+    return bestAffinity < 64 || bestDirection < 28;
+  }
+
+  function getObviousAreaMismatchPenalty(targetArea, existingAreas = [], idleVehicleCount = 0, roundTripMinutes = 0, sameHourLoad = 0) {
+    if (!isObviousAreaMismatch(targetArea, existingAreas)) return 0;
+
+    let penalty = 180;
+    if (Number(idleVehicleCount || 0) > 0) penalty += 220;
+    if (Number(sameHourLoad || 0) > 0) penalty += 140;
+    if (Number(roundTripMinutes || 0) >= LONG_BUNDLE_ROUND_TRIP_MINUTES) penalty += 80;
+    return penalty;
+  }
+
   function getDistanceZoneForAi(distanceKm) {
     const km = Number(distanceKm || 0);
     if (km <= 10) return "near";
@@ -6068,6 +6107,14 @@ function optimizeAssignments(items, vehicles, monthlyMap) {
           const roundTripMinutes = getClusterRoundTripMinutes(cluster);
           const bundleCompatibility = getBundleCompatibilityScore(normalizedClusterArea, existingHourAreas);
           const forceBundle = shouldForceBundleCluster(cluster, existingHourAreas);
+          const obviousAreaMismatch = isObviousAreaMismatch(normalizedClusterArea, existingHourAreas);
+          const areaMismatchPenalty = getObviousAreaMismatchPenalty(
+            normalizedClusterArea,
+            existingHourAreas,
+            idleVehicleCount,
+            roundTripMinutes,
+            sameHourLoad
+          );
           const rotationPrediction = getRotationPredictionScore(
             cluster.hour,
             Number(cluster.totalDistance || 0),
@@ -6102,7 +6149,10 @@ function optimizeAssignments(items, vehicles, monthlyMap) {
             score -= 180;
           }
           if (roundTripMinutes < LONG_BUNDLE_ROUND_TRIP_MINUTES && sameHourLoad > 0 && bundleCompatibility < 50 && idleVehicleCount > 0) {
-            score += 75;
+            score += obviousAreaMismatch ? 320 : 120;
+          }
+          if (obviousAreaMismatch) {
+            score += areaMismatchPenalty;
           }
 
           score += getNormalRunReturnPenalty(
@@ -6191,9 +6241,10 @@ function optimizeAssignments(items, vehicles, monthlyMap) {
       const idleVehicleCount = getIdleVehicleCountForHour(cluster.hour);
       const forceBundle = shouldForceBundleCluster(cluster, bestExistingAreas);
       const clusterLocked = shouldClusterLock(cluster);
+      const obviousAreaMismatch = isObviousAreaMismatch(normalizeAreaLabel(cluster.area), bestExistingAreas);
       const keepTogether = clusterLocked || ((isLastRun || isDefaultLastHourCluster)
         ? true
-        : forceBundle || !shouldPreferSpread(cluster, bestRouteFlowScore, bestRouteContinuityPenalty, bestHourLoad) || idleVehicleCount <= 1);
+        : (!obviousAreaMismatch && (forceBundle || !shouldPreferSpread(cluster, bestRouteFlowScore, bestRouteContinuityPenalty, bestHourLoad))) || idleVehicleCount <= 1);
 
       if (keepTogether) {
         sortedItems.forEach(item => {
@@ -6303,6 +6354,14 @@ function optimizeAssignments(items, vehicles, monthlyMap) {
             const roundTripMinutes = getClusterRoundTripMinutes(pseudoCluster);
             const bundleCompatibility = getBundleCompatibilityScore(normalizedClusterArea, existingHourAreas);
             const forceBundle = shouldForceBundleCluster(pseudoCluster, existingHourAreas);
+            const obviousAreaMismatch = isObviousAreaMismatch(normalizedClusterArea, existingHourAreas);
+            const areaMismatchPenalty = getObviousAreaMismatchPenalty(
+              normalizedClusterArea,
+              existingHourAreas,
+              idleVehicleCount,
+              roundTripMinutes,
+              sameHourLoad
+            );
             const rotationPrediction = getRotationPredictionScore(
               cluster.hour,
               Number(item.distance_km || 0),
@@ -6330,7 +6389,8 @@ function optimizeAssignments(items, vehicles, monthlyMap) {
 
             score -= bundleCompatibility * (roundTripMinutes >= LONG_BUNDLE_ROUND_TRIP_MINUTES ? 1.35 : 0.55);
             if (forceBundle && sameHourLoad > 0) score -= 150;
-            if (roundTripMinutes < LONG_BUNDLE_ROUND_TRIP_MINUTES && sameHourLoad > 0 && bundleCompatibility < 50 && idleVehicleCount > 0) score += 60;
+            if (roundTripMinutes < LONG_BUNDLE_ROUND_TRIP_MINUTES && sameHourLoad > 0 && bundleCompatibility < 50 && idleVehicleCount > 0) score += obviousAreaMismatch ? 280 : 96;
+            if (obviousAreaMismatch) score += areaMismatchPenalty;
 
             score += getNormalRunReturnPenalty(
               cluster.hour,
@@ -6828,15 +6888,22 @@ function getSoftBridgeAreaScore(baseArea, compareArea) {
 
   const northeast = new Set(["我孫子方面", "取手方面", "藤代方面", "守谷方面", "牛久方面"]);
   const eastUrban = new Set(["葛飾方面", "足立方面", "墨田方面", "荒川方面", "江戸川方面", "市川方面"]);
+  const chibaEast = new Set(["市川方面", "船橋方面", "鎌ヶ谷方面"]);
   const downtownBridge = new Set(["墨田方面", "荒川方面"]);
+  const outerFarEast = new Set(["牛久方面"]);
 
   if ((base === "我孫子方面" && eastUrban.has(compare)) || (compare === "我孫子方面" && eastUrban.has(base))) return 108;
+  if ((outerFarEast.has(base) && chibaEast.has(compare)) || (outerFarEast.has(compare) && chibaEast.has(base))) return 0;
+  if ((outerFarEast.has(base) && eastUrban.has(compare)) || (outerFarEast.has(compare) && eastUrban.has(base))) return 18;
   if ((northeast.has(base) && eastUrban.has(compare)) || (northeast.has(compare) && eastUrban.has(base))) return 92;
   if ((base === "我孫子方面" && northeast.has(compare)) || (compare === "我孫子方面" && northeast.has(base))) return 132;
   if ((downtownBridge.has(base) && eastUrban.has(compare)) || (downtownBridge.has(compare) && eastUrban.has(base))) return 86;
 
   const affinity = getAreaAffinityScore(base, compare);
   const direction = getDirectionAffinityScore(base, compare);
+  if ((outerFarEast.has(base) && affinity < 88) || (outerFarEast.has(compare) && affinity < 88)) {
+    if (direction < 72) return 0;
+  }
   if (affinity >= 72 && direction >= 0) return 74;
   if (affinity >= 58 && direction >= 18) return 54;
   return 0;
@@ -6971,10 +7038,13 @@ function rebundleLongDistanceDirectionalClusters(assignments, items, vehicles, m
       : getAreaAffinityScore(targetArea, vehicle?.home_area || "");
     const bundleCount = existingAreas.filter(area => getSoftBridgeAreaScore(targetArea, area) >= 90).length;
     const isLooseOvernight = getOvernightLooseHourBucket(item) === "overnight";
+    const targetCanonical = getCanonicalArea(targetArea) || targetArea;
+    const hasOuterFarEastMismatch = targetCanonical === "牛久方面" && existingAreas.some(area => !["我孫子方面", "取手方面", "藤代方面", "守谷方面", "牛久方面"].includes(getCanonicalArea(area) || area));
     let score = 0;
     score += bestBridge * 3.6;
     score += bundleCount * 110;
     score += strict * 1.15 + direction * 0.7 + bestAffinity * 0.4;
+    if (hasOuterFarEastMismatch) score -= 420;
     score -= Number(month.totalDistance || 0) * 0.018;
     score -= Number(month.avgDistance || 0) * 0.11;
     score -= existingCount * 14;
@@ -7021,6 +7091,86 @@ function rebundleLongDistanceDirectionalClusters(assignments, items, vehicles, m
   return working;
 }
 
+function getIdleVehicleCountForHourFromAssignments(assignments, vehicles, hour) {
+  const used = new Set();
+  (assignments || []).forEach(a => {
+    if (Number(a?.actual_hour ?? 0) !== Number(hour ?? 0)) return;
+    used.add(Number(a.vehicle_id));
+  });
+  return Math.max(0, Number(vehicles?.length || 0) - used.size);
+}
+
+function getHourAreasFromAssignments(assignments, items, vehicleId, hour, excludeItemId = null) {
+  const itemMap = items instanceof Map ? items : new Map((items || []).map(item => [Number(item.id), item]));
+  return (assignments || [])
+    .filter(a => Number(a.vehicle_id) === Number(vehicleId) && Number(a?.actual_hour ?? 0) === Number(hour ?? 0) && (excludeItemId == null || Number(a.item_id) !== Number(excludeItemId)))
+    .map(a => {
+      const row = itemMap.get(Number(a.item_id));
+      return normalizeAreaLabel(row?.destination_area || row?.cluster_area || row?.planned_area || row?.casts?.area || '無し');
+    })
+    .filter(Boolean);
+}
+
+function buildLockedBundleAssignmentIdSet(assignments, items, threshold = 55) {
+  const locked = new Set();
+  if (!Array.isArray(assignments) || !assignments.length || !Array.isArray(items) || !items.length) return locked;
+
+  const itemMap = new Map(items.map(item => [Number(item.id), item]));
+  const byKey = new Map();
+
+  assignments.forEach(a => {
+    const item = itemMap.get(Number(a.item_id));
+    if (!item) return;
+    const key = getAssignmentItemHourGroupKey(item);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push({ assignment: a, item });
+  });
+
+  for (const rows of byKey.values()) {
+    if (!rows || rows.length < 2) continue;
+    const vehicleIds = new Set(rows.map(row => Number(row.assignment.vehicle_id)));
+    if (vehicleIds.size !== 1) continue;
+    const minRoundTrip = Math.min(...rows.map(row => getRoundTripMinutesForItem(row.item)));
+    if (minRoundTrip < Number(threshold || 55)) continue;
+    rows.forEach(row => locked.add(Number(row.assignment.item_id)));
+  }
+
+  return locked;
+}
+
+function isBundleCompatibilityMoveBlocked(targetArea, destinationAreas = [], idleVehicleCount = 0) {
+  const areas = (destinationAreas || []).map(area => normalizeAreaLabel(area)).filter(Boolean);
+  if (!areas.length) return Number(idleVehicleCount || 0) <= 0;
+  if (areas.some(area => hasHardReverseMix(targetArea, [area]))) return true;
+
+  const normalized = normalizeAreaLabel(targetArea);
+  const canonical = getCanonicalArea(normalized);
+  const group = getAreaDisplayGroup(normalized);
+  const sameCanonical = areas.some(area => {
+    const areaCanonical = getCanonicalArea(area);
+    return areaCanonical && canonical && areaCanonical === canonical;
+  });
+  if (sameCanonical) return false;
+
+  const sameGroup = areas.some(area => getAreaDisplayGroup(area) === group);
+  if (sameGroup) return false;
+
+  const bestAffinity = Math.max(...areas.map(area => getAreaAffinityScore(normalized, area)), 0);
+  const bestDirection = Math.max(...areas.map(area => getDirectionAffinityScore(normalized, area)), -999);
+  const bundleCompatibility = Math.max(...areas.map(area => getSoftBridgeAreaScore(normalized, area)), 0);
+
+  const isOuterFarEast = canonical === "牛久方面";
+  if (isOuterFarEast) {
+    const hasNearNortheastMate = areas.some(area => ["我孫子方面", "取手方面", "藤代方面", "守谷方面", "牛久方面"].includes(getCanonicalArea(area) || area));
+    if (!hasNearNortheastMate) return true;
+  }
+
+  if (bundleCompatibility >= 90) return false;
+  if (bestAffinity >= 78 && bestDirection >= 28) return false;
+  if (bestAffinity >= 70 && bestDirection >= 20 && Number(idleVehicleCount || 0) > 0) return false;
+  return true;
+}
+
 function optimizeAssignmentsByDistanceBalance(assignments, items, vehicles, monthlyMap) {
   const working = assignments.map(a => ({ ...a }));
   if (!working.length || !vehicles.length) return working;
@@ -7028,6 +7178,7 @@ function optimizeAssignmentsByDistanceBalance(assignments, items, vehicles, mont
   const itemMap = new Map((items || []).map(item => [Number(item.id), item]));
   const hourLoads = new Map();
   const assignedDistance = new Map();
+  const lockedBundleItemIds = buildLockedBundleAssignmentIdSet(working, items, 55);
 
   const getDistanceForAssignment = assignment => {
     const item = itemMap.get(Number(assignment.item_id));
@@ -7056,18 +7207,22 @@ function optimizeAssignmentsByDistanceBalance(assignments, items, vehicles, mont
   rebuild();
 
   for (const assignment of working) {
+    if (lockedBundleItemIds.has(Number(assignment.item_id))) continue;
+
     const currentVehicleId = Number(assignment.vehicle_id);
     const currentProjected = getProjectedDistance(currentVehicleId);
     const item = itemMap.get(Number(assignment.item_id));
     if (!item) continue;
 
-    const area = normalizeAreaLabel(item.destination_area || item.cluster_area || "無し");
+    const hour = Number(assignment.actual_hour ?? 0);
+    const idleVehicleCount = getIdleVehicleCountForHourFromAssignments(working, vehicles, hour);
+    const area = normalizeAreaLabel(item.destination_area || item.cluster_area || item.planned_area || '無し');
     const dist = Number(item.distance_km || assignment.distance_km || 0);
     const currentVehicle = vehicles.find(v => Number(v.id) === currentVehicleId);
     const currentCompat =
-      getStrictHomeCompatibilityScore(area, currentVehicle?.home_area || "") * 1.4 +
-      Math.max(0, getDirectionAffinityScore(area, currentVehicle?.home_area || "")) * 0.7 +
-      getAreaAffinityScore(area, currentVehicle?.home_area || "");
+      getStrictHomeCompatibilityScore(area, currentVehicle?.home_area || '') * 1.4 +
+      Math.max(0, getDirectionAffinityScore(area, currentVehicle?.home_area || '')) * 0.7 +
+      getAreaAffinityScore(area, currentVehicle?.home_area || '');
 
     let bestMove = null;
 
@@ -7075,22 +7230,44 @@ function optimizeAssignmentsByDistanceBalance(assignments, items, vehicles, mont
       const vehicleId = Number(vehicle.id);
       if (vehicleId === currentVehicleId) continue;
 
-      const hourKey = `${vehicleId}__${Number(assignment.actual_hour ?? 0)}`;
+      const hourKey = `${vehicleId}__${hour}`;
       const seatCapacity = Number(vehicle.seat_capacity || 4);
       const hourLoad = Number(hourLoads.get(hourKey) || 0);
       if (hourLoad >= seatCapacity) continue;
+
+      const destinationAreas = getHourAreasFromAssignments(working, itemMap, vehicleId, hour, Number(assignment.item_id));
+      if (isBundleCompatibilityMoveBlocked(area, destinationAreas, idleVehicleCount)) continue;
 
       const candidateProjected = getProjectedDistance(vehicleId);
       const projectedGapImprove = currentProjected - candidateProjected;
       if (projectedGapImprove < 10) continue;
 
       const compat =
-        getStrictHomeCompatibilityScore(area, vehicle.home_area || "") * 1.4 +
-        Math.max(0, getDirectionAffinityScore(area, vehicle.home_area || "")) * 0.7 +
-        getAreaAffinityScore(area, vehicle.home_area || "");
-      if (isHardReverseForHome(area, vehicle.home_area || "")) continue;
+        getStrictHomeCompatibilityScore(area, vehicle.home_area || '') * 1.4 +
+        Math.max(0, getDirectionAffinityScore(area, vehicle.home_area || '')) * 0.7 +
+        getAreaAffinityScore(area, vehicle.home_area || '');
+      if (isHardReverseForHome(area, vehicle.home_area || '')) continue;
 
-      const score = projectedGapImprove * 2.2 + (compat - currentCompat) * 1.1 - dist * 0.12;
+      const bundleCompatibility = destinationAreas.length
+        ? Math.max(...destinationAreas.map(existingArea => getSoftBridgeAreaScore(area, existingArea)), 0)
+        : 0;
+      const bestAffinity = destinationAreas.length
+        ? Math.max(...destinationAreas.map(existingArea => getAreaAffinityScore(area, existingArea)), 0)
+        : 0;
+      const bestDirection = destinationAreas.length
+        ? Math.max(...destinationAreas.map(existingArea => getDirectionAffinityScore(area, existingArea)), -999)
+        : 0;
+
+      let score = projectedGapImprove * 2.2 + (compat - currentCompat) * 1.1 - dist * 0.12;
+      score += bundleCompatibility * 1.35;
+      score += bestAffinity * 0.38;
+      score += Math.max(0, bestDirection) * 0.42;
+
+      if (idleVehicleCount <= 0) {
+        score += destinationAreas.length ? 220 : -260;
+        if (bundleCompatibility < 90 && bestAffinity < 78) score -= 320;
+      }
+
       if (!bestMove || score > bestMove.score) {
         bestMove = { vehicle, score };
       }
@@ -7098,7 +7275,7 @@ function optimizeAssignmentsByDistanceBalance(assignments, items, vehicles, mont
 
     if (bestMove && bestMove.score >= 28) {
       assignment.vehicle_id = bestMove.vehicle.id;
-      assignment.driver_name = bestMove.vehicle.driver_name || "";
+      assignment.driver_name = bestMove.vehicle.driver_name || '';
       rebuild();
     }
   }
@@ -9445,3 +9622,419 @@ runAutoDispatch = async function() {
   };
 })();
 /* ===== THEMIS v5.5.3 patch end ===== */
+
+
+// v6.4.12 no-idle directional rebundle patch
+(function(){
+  function v6412AreaNorm(rowOrArea) {
+    if (!rowOrArea) return '';
+    if (typeof rowOrArea === 'string') return normalizeAreaLabel(rowOrArea || '');
+    return normalizeAreaLabel(rowOrArea?.destination_area || rowOrArea?.cluster_area || rowOrArea?.planned_area || rowOrArea?.casts?.area || '');
+  }
+
+  function v6412DirectionFitScore(area, areas) {
+    const normalized = normalizeAreaLabel(area || '');
+    const list = (Array.isArray(areas) ? areas : []).map(v6412AreaNorm).filter(Boolean);
+    if (!normalized || !list.length) return 0;
+    const sameCanonical = list.some(a => {
+      const ca = getCanonicalArea(a) || '';
+      const cb = getCanonicalArea(normalized) || '';
+      return ca && cb && ca === cb;
+    });
+    const sameGroup = list.some(a => getAreaDisplayGroup(a) === getAreaDisplayGroup(normalized));
+    const bestBridge = Math.max(...list.map(a => getSoftBridgeAreaScore(normalized, a)), 0);
+    const bestAffinity = Math.max(...list.map(a => getAreaAffinityScore(normalized, a)), 0);
+    const bestDirection = Math.max(...list.map(a => getDirectionAffinityScore(normalized, a)), -999);
+    let score = bestBridge * 1.4 + bestAffinity * 0.55 + Math.max(0, bestDirection) * 0.65;
+    if (sameCanonical) score += 220;
+    else if (sameGroup) score += 140;
+    if (list.some(a => getAreaAffinityScore(normalized, a) <= 26 || getDirectionAffinityScore(normalized, a) <= -34)) score -= 900;
+    return score;
+  }
+
+  function v6412CanMoveRowToVehicle(row, targetState, currentState) {
+    const vehicle = targetState?.vehicle;
+    const seat = Math.max(1, Number(vehicle?.seat_capacity || 4));
+    const targetRows = Array.isArray(targetState?.rows) ? targetState.rows : [];
+    if (targetRows.length >= seat) return false;
+    const area = v6412AreaNorm(row);
+    const targetAreas = targetRows.map(v6412AreaNorm).filter(Boolean);
+    if (targetAreas.some(a => getAreaAffinityScore(area, a) <= 26 || getDirectionAffinityScore(area, a) <= -34)) return false;
+    const currentRows = Array.isArray(currentState?.rows) ? currentState.rows : [];
+    if (currentRows.length <= 1) return false;
+    return true;
+  }
+
+  function v6412RebundleNoIdle(assignments, vehicles) {
+    let rows = Array.isArray(assignments) ? assignments.map(r => ({ ...r })) : [];
+    const vehicleList = Array.isArray(vehicles) ? vehicles : [];
+    if (!rows.length || !vehicleList.length) return rows;
+
+    const hours = [...new Set(rows.map(r => Number(r?.actual_hour ?? 0)))];
+    for (const hour of hours) {
+      if (getIdleVehicleCountForHourFromAssignments(rows, vehicleList, hour) > 0) continue;
+
+      let changed = true;
+      let guard = 0;
+      while (changed && guard < 12) {
+        changed = false;
+        guard += 1;
+        const states = new Map();
+        vehicleList.forEach(v => states.set(Number(v.id), { vehicle: v, rows: [] }));
+        rows.filter(r => Number(r?.actual_hour ?? 0) === Number(hour)).forEach(r => {
+          const st = states.get(Number(r?.vehicle_id || 0));
+          if (st) st.rows.push(r);
+        });
+
+        let bestMove = null;
+        for (const row of rows.filter(r => Number(r?.actual_hour ?? 0) === Number(hour))) {
+          const rowId = Number(row?.id || 0);
+          const currentVehicleId = Number(row?.vehicle_id || 0);
+          const currentState = states.get(currentVehicleId);
+          if (!currentState || currentState.rows.length <= 1) continue;
+          const area = v6412AreaNorm(row);
+          const currentAreasWithout = currentState.rows.filter(r => Number(r?.id || 0) !== rowId).map(v6412AreaNorm).filter(Boolean);
+          const stayScore = v6412DirectionFitScore(area, currentAreasWithout);
+
+          for (const [targetVehicleId, targetState] of states.entries()) {
+            if (targetVehicleId === currentVehicleId) continue;
+            if (!v6412CanMoveRowToVehicle(row, targetState, currentState)) continue;
+            const targetAreas = targetState.rows.map(v6412AreaNorm).filter(Boolean);
+            const moveScore = v6412DirectionFitScore(area, targetAreas);
+            if (!targetAreas.length) continue;
+
+            const moveGain = moveScore - stayScore;
+            const stayMismatch = stayScore < 140;
+            const targetStrong = moveScore >= 170;
+            if (!stayMismatch || !targetStrong) continue;
+
+            const currentHome = currentState.vehicle?.home_area || '';
+            const targetHome = targetState.vehicle?.home_area || '';
+            const homeDelta = (
+              getStrictHomeCompatibilityScore(area, targetHome) + Math.max(0, getDirectionAffinityScore(area, targetHome)) * 0.35
+            ) - (
+              getStrictHomeCompatibilityScore(area, currentHome) + Math.max(0, getDirectionAffinityScore(area, currentHome)) * 0.35
+            );
+
+            const score = moveGain * 2.1 + homeDelta * 0.35 + (targetState.rows.length * 8);
+            if (!bestMove || score > bestMove.score) {
+              bestMove = { rowId, from: currentVehicleId, to: targetVehicleId, score };
+            }
+          }
+        }
+
+        if (bestMove && bestMove.score >= 80) {
+          rows = rows.map(r => Number(r?.id || 0) === Number(bestMove.rowId) ? { ...r, vehicle_id: bestMove.to } : r);
+          changed = true;
+        }
+      }
+    }
+
+    return rows;
+  }
+
+  const _THEMIS_V6412_BASE_optimizeAssignmentsByDistanceBalance = optimizeAssignmentsByDistanceBalance;
+  optimizeAssignmentsByDistanceBalance = function(assignments, items, vehicles, monthlyMap) {
+    let rows = _THEMIS_V6412_BASE_optimizeAssignmentsByDistanceBalance.apply(this, arguments);
+    if (!Array.isArray(rows)) rows = Array.isArray(assignments) ? assignments : [];
+    rows = v6412RebundleNoIdle(rows, vehicles || []);
+    return rows;
+  };
+
+  const _THEMIS_V6412_BASE_applyManualLastVehicleToAssignments = applyManualLastVehicleToAssignments;
+  applyManualLastVehicleToAssignments = function(assignments, vehicles) {
+    let rows = _THEMIS_V6412_BASE_applyManualLastVehicleToAssignments.apply(this, arguments);
+    if (!Array.isArray(rows)) rows = Array.isArray(assignments) ? assignments : [];
+    rows = v6412RebundleNoIdle(rows, vehicles || []);
+    return rows;
+  };
+})();
+
+const _THEMIS_V6412_prevOptimizeAssignmentsByDistanceBalance = optimizeAssignmentsByDistanceBalance;
+
+function getThemisV6412PeerBundleScore(targetArea, peerAreas = []) {
+  const normalized = normalizeAreaLabel(targetArea || "無し");
+  const peers = (peerAreas || []).map(a => normalizeAreaLabel(a)).filter(Boolean);
+  if (!peers.length) return -120;
+
+  let score = 0;
+  for (const area of peers) {
+    if (hasHardReverseMix(normalized, [area])) return -9999;
+
+    const sameCanonical = (getCanonicalArea(normalized) && getCanonicalArea(normalized) === getCanonicalArea(area)) ? 1 : 0;
+    const sameGroup = getAreaDisplayGroup(normalized) === getAreaDisplayGroup(area) ? 1 : 0;
+    const bridge = getSoftBridgeAreaScore(normalized, area);
+    const affinity = getAreaAffinityScore(normalized, area);
+    const direction = getDirectionAffinityScore(normalized, area);
+    const routeFlow = getRouteFlowCompatibilityBetweenAreas(normalized, area);
+
+    score += sameCanonical ? 420 : 0;
+    score += sameGroup ? 240 : 0;
+    score += bridge * 3.2;
+    score += affinity * 1.8;
+    score += Math.max(0, direction) * 1.1;
+    score += routeFlow * 0.9;
+  }
+
+  return score;
+}
+
+function enforceNoIdleHourBundling(assignments, items, vehicles, monthlyMap) {
+  const working = Array.isArray(assignments) ? assignments.map(a => ({ ...a })) : [];
+  if (!working.length || !Array.isArray(vehicles) || !vehicles.length) return working;
+
+  const itemMap = new Map((items || []).map(item => [Number(item.id), item]));
+  const lockedBundleItemIds = buildLockedBundleAssignmentIdSet(working, items, 55);
+
+  const getAssignmentArea = (assignment) => {
+    const item = itemMap.get(Number(assignment.item_id));
+    return normalizeAreaLabel(item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || '無し');
+  };
+
+  const getHourLoad = (vehicleId, hour, excludeItemId = null) => {
+    return working.filter(a => Number(a.vehicle_id) === Number(vehicleId) && Number(a.actual_hour ?? 0) === Number(hour ?? 0) && (excludeItemId == null || Number(a.item_id) !== Number(excludeItemId))).length;
+  };
+
+  const getProjectedDistance = (vehicleId, excludeItemId = null, includeItem = null) => {
+    let distance = Number(monthlyMap?.get(Number(vehicleId))?.totalDistance || 0);
+    for (const a of working) {
+      if (Number(a.vehicle_id) !== Number(vehicleId)) continue;
+      if (excludeItemId != null && Number(a.item_id) === Number(excludeItemId)) continue;
+      const item = itemMap.get(Number(a.item_id));
+      distance += Number(item?.distance_km ?? a?.distance_km ?? 0);
+    }
+    if (includeItem) distance += Number(includeItem?.distance_km || 0);
+    return distance;
+  };
+
+  const byHour = new Map();
+  for (const a of working) {
+    const hour = Number(a.actual_hour ?? 0);
+    if (!byHour.has(hour)) byHour.set(hour, []);
+    byHour.get(hour).push(a);
+  }
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const [hour, rows] of byHour.entries()) {
+      if (!rows || rows.length < 2) continue;
+      const idleVehicleCount = getIdleVehicleCountForHourFromAssignments(working, vehicles, hour);
+      if (idleVehicleCount > 0) continue;
+
+      for (const assignment of [...working].filter(a => Number(a.actual_hour ?? 0) === Number(hour))) {
+        if (lockedBundleItemIds.has(Number(assignment.item_id))) continue;
+        const item = itemMap.get(Number(assignment.item_id));
+        if (!item) continue;
+
+        const targetArea = getAssignmentArea(assignment);
+        const currentVehicleId = Number(assignment.vehicle_id);
+        const currentVehicle = vehicles.find(v => Number(v.id) === currentVehicleId);
+        const currentPeers = getHourAreasFromAssignments(working, itemMap, currentVehicleId, hour, Number(assignment.item_id));
+        const currentPeerScore = getThemisV6412PeerBundleScore(targetArea, currentPeers);
+        const currentHomeScore =
+          getStrictHomeCompatibilityScore(targetArea, currentVehicle?.home_area || '') * 1.2 +
+          Math.max(0, getDirectionAffinityScore(targetArea, currentVehicle?.home_area || '')) * 0.8 +
+          getAreaAffinityScore(targetArea, currentVehicle?.home_area || '') * 0.5;
+        const currentTotal = currentPeerScore + currentHomeScore;
+
+        let bestMove = null;
+
+        for (const vehicle of vehicles) {
+          const vehicleId = Number(vehicle.id);
+          if (vehicleId === currentVehicleId) continue;
+
+          const seatCapacity = Number(vehicle.seat_capacity || 4);
+          const hourLoad = getHourLoad(vehicleId, hour, null);
+          if (hourLoad >= seatCapacity) continue;
+          if (isHardReverseForHome(targetArea, vehicle?.home_area || '')) continue;
+
+          const destinationAreas = getHourAreasFromAssignments(working, itemMap, vehicleId, hour, Number(assignment.item_id));
+          if (!destinationAreas.length) continue;
+          if (destinationAreas.some(area => hasHardReverseMix(targetArea, [area]))) continue;
+
+          const sameGroup = destinationAreas.some(area => getAreaDisplayGroup(area) === getAreaDisplayGroup(targetArea));
+          const sameCanonical = destinationAreas.some(area => {
+            const a = getCanonicalArea(area);
+            const b = getCanonicalArea(targetArea);
+            return a && b && a === b;
+          });
+          const peerScore = getThemisV6412PeerBundleScore(targetArea, destinationAreas);
+          const homeScore =
+            getStrictHomeCompatibilityScore(targetArea, vehicle?.home_area || '') * 0.9 +
+            Math.max(0, getDirectionAffinityScore(targetArea, vehicle?.home_area || '')) * 0.6 +
+            getAreaAffinityScore(targetArea, vehicle?.home_area || '') * 0.35;
+
+          const currentProjected = getProjectedDistance(currentVehicleId, Number(assignment.item_id), null);
+          const nextProjected = getProjectedDistance(vehicleId, null, item);
+          const distancePenalty = Math.max(0, nextProjected - currentProjected) * 0.03;
+
+          let moveScore = peerScore + homeScore - distancePenalty;
+          if (sameCanonical) moveScore += 180;
+          else if (sameGroup) moveScore += 120;
+
+          const improvement = moveScore - currentTotal;
+          if (improvement < 140) continue;
+
+          if (!bestMove || improvement > bestMove.improvement) {
+            bestMove = { vehicle, improvement };
+          }
+        }
+
+        if (bestMove) {
+          assignment.vehicle_id = Number(bestMove.vehicle.id);
+          assignment.driver_name = bestMove.vehicle?.driver_name || '';
+        }
+      }
+    }
+  }
+
+  return working;
+}
+
+optimizeAssignmentsByDistanceBalance = function(assignments, items, vehicles, monthlyMap) {
+  let working = _THEMIS_V6412_prevOptimizeAssignmentsByDistanceBalance(assignments, items, vehicles, monthlyMap);
+  working = enforceNoIdleHourBundling(working, items, vehicles, monthlyMap);
+  return working;
+};
+
+/* ===== THEMIS v6.4.12 no-idle rebundle patch start ===== */
+(function(){
+  const _THEMIS_V6412_BASE_optimizeAssignments = optimizeAssignments;
+
+  function v6412NormArea(row) {
+    return normalizeAreaLabel(
+      row?.destination_area || row?.cluster_area || row?.planned_area || row?.casts?.area || '無し'
+    );
+  }
+
+  function v6412PairScore(areaA, areaB) {
+    const a = v6412NormArea({ destination_area: areaA });
+    const b = v6412NormArea({ destination_area: areaB });
+    if (!a || !b) return 0;
+    const canonA = getCanonicalArea(a) || '';
+    const canonB = getCanonicalArea(b) || '';
+    const groupA = getAreaDisplayGroup(a) || '';
+    const groupB = getAreaDisplayGroup(b) || '';
+    const affinity = Number(getAreaAffinityScore(a, b) || 0);
+    const direction = Number(getDirectionAffinityScore(a, b) || 0);
+    const bridge = Number(getSoftBridgeAreaScore(a, b) || 0);
+
+    if (canonA && canonB && canonA === canonB) return 360 + bridge + affinity + Math.max(0, direction);
+    if (groupA && groupB && groupA === groupB) return 260 + bridge + affinity + Math.max(0, direction);
+    if (bridge >= 90) return 240 + bridge + affinity + Math.max(0, direction);
+    if (bridge >= 75) return 140 + bridge + affinity + Math.max(0, direction);
+    if (affinity >= 78) return 110 + affinity + Math.max(0, direction);
+    if (direction <= -35) return -420;
+    if (bridge < 55 && affinity < 60 && direction < 18) return -180;
+    return affinity + Math.max(-20, direction);
+  }
+
+  function v6412VehicleHourScore(rows, vehicleId, hour) {
+    const list = rows.filter(r => Number(r?.vehicle_id || 0) === Number(vehicleId) && Number(r?.actual_hour ?? 0) === Number(hour));
+    if (list.length <= 1) return 0;
+    let score = 0;
+    for (let i = 0; i < list.length; i += 1) {
+      for (let j = i + 1; j < list.length; j += 1) {
+        score += v6412PairScore(v6412NormArea(list[i]), v6412NormArea(list[j]));
+      }
+    }
+    return score;
+  }
+
+  function v6412HourTotalScore(rows, hour, vehicleIds) {
+    return vehicleIds.reduce((sum, vehicleId) => sum + v6412VehicleHourScore(rows, vehicleId, hour), 0);
+  }
+
+  function v6412CountByVehicle(rows, hour) {
+    const map = new Map();
+    rows.filter(r => Number(r?.actual_hour ?? 0) === Number(hour)).forEach(r => {
+      const vid = Number(r?.vehicle_id || 0);
+      map.set(vid, Number(map.get(vid) || 0) + 1);
+    });
+    return map;
+  }
+
+  function v6412HasNoIdleVehicles(rows, hour, vehicles) {
+    const hourRows = rows.filter(r => Number(r?.actual_hour ?? 0) === Number(hour));
+    const activeVehicleIds = [...new Set(hourRows.map(r => Number(r?.vehicle_id || 0)).filter(Boolean))];
+    const selectedVehicleIds = (vehicles || []).map(v => Number(v.id || 0)).filter(Boolean);
+    if (!hourRows.length || !selectedVehicleIds.length) return false;
+    return activeVehicleIds.length >= selectedVehicleIds.length;
+  }
+
+  function v6412CanMoveRow(row, toVehicleId, rows, vehicles, lockedItemIds) {
+    if (lockedItemIds.has(Number(row?.item_id || row?.id || 0))) return false;
+    const targetVehicle = (vehicles || []).find(v => Number(v.id || 0) === Number(toVehicleId));
+    if (!targetVehicle) return false;
+    const hour = Number(row?.actual_hour ?? 0);
+    const counts = v6412CountByVehicle(rows, hour);
+    const cap = Number(targetVehicle.seat_capacity || 4);
+    if (Number(counts.get(Number(toVehicleId)) || 0) >= cap) return false;
+
+    const rowArea = v6412NormArea(row);
+    const existing = rows.filter(r => Number(r?.vehicle_id || 0) === Number(toVehicleId) && Number(r?.actual_hour ?? 0) === hour);
+    if (!existing.length) return false; // no-idle phase only rebundle into already used vehicles
+    const hardReverse = existing.some(r => Number(getDirectionAffinityScore(rowArea, v6412NormArea(r)) || 0) <= -35);
+    if (hardReverse) return false;
+    return true;
+  }
+
+  function v6412RebundleNoIdle(rows, items, vehicles) {
+    let working = Array.isArray(rows) ? rows.map(r => ({ ...r })) : [];
+    if (!working.length) return working;
+
+    const lockedItemIds = new Set();
+    try {
+      buildLockedBundleAssignmentIdSet(working, items, 55).forEach(id => lockedItemIds.add(Number(id)));
+    } catch (e) {}
+
+    const hours = [...new Set(working.map(r => Number(r?.actual_hour ?? 0)).filter(h => Number.isFinite(h)))].sort((a,b) => a-b);
+    for (const hour of hours) {
+      if (!v6412HasNoIdleVehicles(working, hour, vehicles)) continue;
+      const hourRows = working.filter(r => Number(r?.actual_hour ?? 0) === hour);
+      const vehicleIds = [...new Set(hourRows.map(r => Number(r?.vehicle_id || 0)).filter(Boolean))];
+      if (vehicleIds.length <= 1) continue;
+
+      let improved = true;
+      let guard = 0;
+      while (improved && guard < 24) {
+        guard += 1;
+        improved = false;
+        const baseScore = v6412HourTotalScore(working, hour, vehicleIds);
+        let bestMove = null;
+
+        const freshHourRows = working.filter(r => Number(r?.actual_hour ?? 0) === hour);
+        for (const row of freshHourRows) {
+          const fromVehicleId = Number(row?.vehicle_id || 0);
+          if (!fromVehicleId) continue;
+          const fromCount = freshHourRows.filter(r => Number(r?.vehicle_id || 0) === fromVehicleId).length;
+          if (fromCount <= 1) continue; // do not empty a vehicle in no-idle rebundle
+
+          for (const toVehicleId of vehicleIds) {
+            if (Number(toVehicleId) === fromVehicleId) continue;
+            if (!v6412CanMoveRow(row, toVehicleId, working, vehicles, lockedItemIds)) continue;
+
+            const simulated = working.map(r => Number(r?.id || 0) === Number(row?.id || 0) ? { ...r, vehicle_id: Number(toVehicleId) } : r);
+            const nextScore = v6412HourTotalScore(simulated, hour, vehicleIds);
+            const gain = nextScore - baseScore;
+            if (gain > 120 && (!bestMove || gain > bestMove.gain)) {
+              bestMove = { rowId: Number(row?.id || 0), toVehicleId: Number(toVehicleId), gain };
+            }
+          }
+        }
+
+        if (bestMove) {
+          working = working.map(r => Number(r?.id || 0) === bestMove.rowId ? { ...r, vehicle_id: bestMove.toVehicleId } : r);
+          improved = true;
+        }
+      }
+    }
+    return working;
+  }
+
+  optimizeAssignments = function(items, vehicles, monthlyMap) {
+    let rows = _THEMIS_V6412_BASE_optimizeAssignments.apply(this, arguments);
+    rows = v6412RebundleNoIdle(rows, items, vehicles);
+    return rows;
+  };
+})();
+/* ===== THEMIS v6.4.12 no-idle rebundle patch end ===== */
