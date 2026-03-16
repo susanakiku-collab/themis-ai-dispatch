@@ -1814,56 +1814,60 @@ img, table, input, select, textarea, button{
 
 
 /* =========================================
-   Matrix text no-wrap tuning for smartphone
+   Matrix name color status style
    ========================================= */
 .matrix-item{
-  align-items:flex-start;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+  color:#dce5f4;
+  font-size:13px;
 }
 
-.matrix-item > span:last-child{
+.matrix-name{
+  font-weight:700;
+}
+
+.matrix-name a{
+  text-decoration:none;
+}
+
+.matrix-name.pending,
+.matrix-name.pending a{
+  color:#ffd76a;
+}
+
+.matrix-name.done,
+.matrix-name.done a{
+  color:#7ee0a1;
+}
+
+.matrix-name.cancel,
+.matrix-name.cancel a{
+  color:#ff9aa5;
+}
+
+.matrix-meta{
   display:inline-block;
   white-space:nowrap;
   word-break:keep-all;
+  color:#dce5f4;
 }
 
-@media (max-width: 640px){
+@media (max-width:640px){
   .matrix-item{
-    gap:6px;
+    gap:4px 6px;
+    align-items:baseline;
   }
 
-  .matrix-item > span:last-child{
+  .matrix-name{
+    font-size:13px;
+  }
+
+  .matrix-meta{
     font-size:12px;
     white-space:nowrap;
     word-break:keep-all;
-  }
-}
-
-/* =========================================
-   Plans matrix smartphone density tuning
-   ========================================= */
-@media (max-width: 640px){
-  .matrix-table{
-    font-size:12px;
-  }
-
-  .matrix-table th,
-  .matrix-table td{
-    padding:10px 8px;
-    vertical-align:top;
-  }
-
-  .matrix-table td .matrix-item{
-    margin-bottom:8px;
-    line-height:1.35;
-  }
-
-  .matrix-table td .chip{
-    transform:scale(0.92);
-    transform-origin:left center;
-    margin-right:4px;
-  }
-
-  .matrix-table td{
-    min-width:140px;
   }
 }
