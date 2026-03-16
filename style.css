@@ -1812,9 +1812,8 @@ img, table, input, select, textarea, button{
   }
 }
 
-
 /* =========================================
-   Matrix legend + status color tuning
+   Matrix legend + status colors
    ========================================= */
 .matrix-legend{
   display:flex;
@@ -1825,13 +1824,11 @@ img, table, input, select, textarea, button{
   font-size:12px;
   color:#cdd8ea;
 }
-
 .matrix-legend-item{
   display:inline-flex;
   align-items:center;
   gap:6px;
 }
-
 .matrix-dot{
   width:10px;
   height:10px;
@@ -1839,18 +1836,9 @@ img, table, input, select, textarea, button{
   display:inline-block;
   box-shadow:0 0 0 1px rgba(255,255,255,.14) inset;
 }
-
-.matrix-dot.pending{
-  background:#f0c24b;
-}
-
-.matrix-dot.done{
-  background:#2fbf7a;
-}
-
-.matrix-dot.cancel{
-  background:#e05252;
-}
+.matrix-dot.pending{ background:#f0c24b; }
+.matrix-dot.done{ background:#2fbf7a; }
+.matrix-dot.cancel{ background:#e05252; }
 
 .matrix-line{
   display:inline-flex;
@@ -1858,26 +1846,21 @@ img, table, input, select, textarea, button{
   gap:6px;
   flex-wrap:wrap;
 }
-
 .matrix-name{
   font-weight:700;
 }
-
 .matrix-name.status-pending,
 .matrix-name.status-assigned,
 .matrix-name.status-planned,
 .matrix-name.status-waiting{
   color:#f0c24b;
 }
-
 .matrix-name.status-done{
   color:#2fbf7a;
 }
-
 .matrix-name.status-cancel{
   color:#ff7b86;
 }
-
 .matrix-meta{
   color:#dce5f4;
   white-space:nowrap;
@@ -1889,16 +1872,13 @@ img, table, input, select, textarea, button{
     gap:8px 12px;
     font-size:11px;
   }
-
   .matrix-line{
     align-items:flex-start;
     gap:4px;
   }
-
   .matrix-name{
     line-height:1.3;
   }
-
   .matrix-meta{
     font-size:12px;
   }
