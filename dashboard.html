@@ -110,14 +110,14 @@
               <input id="castName" type="text" placeholder="例：佐藤" />
             </div>
 
+            <div class="field">
+              <label for="castDistanceKm">想定距離(km)</label>
+              <input id="castDistanceKm" type="number" step="0.1" placeholder="例：18" />
+            </div>
+
             <div class="field full">
               <label for="castAddress">住所</label>
               <input id="castAddress" type="text" placeholder="例：千葉県柏市若柴..." />
-            </div>
-
-            <div class="field mini">
-              <label for="castDistanceKm">想定距離(km)</label>
-              <input id="castDistanceKm" type="number" step="0.1" placeholder="例：18" />
             </div>
 
             <div class="field">
@@ -159,7 +159,7 @@
             <input id="csvFileInput" type="file" accept=".csv,text/csv" class="hidden" />
           </div>
 
-          <div class="table-wrap" style="display:none;">
+          <div class="table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
@@ -288,34 +288,23 @@
             <input id="vehicleCsvFileInput" type="file" accept=".csv,text/csv" class="hidden" />
           </div>
 
-          <div class="action-row" style="margin-top:12px; margin-bottom:12px;">
-            <button
-              type="button"
-              class="btn ghost"
-              id="toggleVehiclesListBtn"
-              onclick="(function(btn){const wrap=document.getElementById('vehiclesListSection'); const isHidden = getComputedStyle(wrap).display === 'none'; wrap.style.display = isHidden ? 'block' : 'none'; btn.textContent = isHidden ? '一覧を閉じる' : '一覧表示';})(this)"
-            >一覧表示</button>
-          </div>
-
-          <div id="vehiclesListSection" style="display:none;">
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>ドライバー</th>
-                    <th>車両</th>
-                    <th>担当方面</th>
-                    <th>帰宅方面</th>
-                    <th>定員</th>
-                    <th>月間距離(km)</th>
-                    <th>出勤日数</th>
-                    <th>1日平均(km)</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody id="vehiclesTableBody"></tbody>
-              </table>
-            </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ドライバー</th>
+                  <th>車両</th>
+                  <th>担当方面</th>
+                  <th>帰宅方面</th>
+                  <th>定員</th>
+                  <th>月間距離(km)</th>
+                  <th>出勤日数</th>
+                  <th>1日平均(km)</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="vehiclesTableBody"></tbody>
+            </table>
           </div>
 
           <div class="divider"></div>
@@ -458,12 +447,15 @@
             <button id="cancelPlanEditBtn" class="btn ghost">入力リセット</button>
           </div>
 
-          <div id="plansGroupedTable" class="table-wrap"></div>
+          <h3>時間帯 × 方面 一覧</h3>
+          <div id="plansTimeAreaMatrix" class="table-wrap"></div>
 
           <div class="divider"></div>
 
-          <h3>時間帯 × 方面 一覧</h3>
-          <div id="plansTimeAreaMatrix" class="table-wrap"></div>
+          <details class="list-toggle-block">
+            <summary>時間帯別の一覧を表示</summary>
+            <div id="plansGroupedTable" class="table-wrap"></div>
+          </details>
         </section>
       </section>
 
@@ -547,12 +539,15 @@
             <button id="cancelActualEditBtn" class="btn ghost">入力リセット</button>
           </div>
 
-          <div id="actualTableWrap" class="table-wrap"></div>
+          <h3>時間帯 × 方面 一覧</h3>
+          <div id="actualTimeAreaMatrix" class="table-wrap"></div>
 
           <div class="divider"></div>
 
-          <h3>時間帯 × 方面 一覧</h3>
-          <div id="actualTimeAreaMatrix" class="table-wrap"></div>
+          <details class="list-toggle-block">
+            <summary>時間帯別の一覧を表示</summary>
+            <div id="actualTableWrap" class="table-wrap"></div>
+          </details>
         </section>
       </section>
 
