@@ -4342,12 +4342,13 @@ function buildMatrixMetaText(distanceKm, travelMinutes) {
 }
 
 function buildMatrixNameLine(row, status, addressKey = "destination_address") {
+  const safeStatus = normalizeStatus(status);
   const nameHtml = buildMapLinkHtml({
     name: row.casts?.name,
     address: row[addressKey] || row.casts?.address,
     lat: row.casts?.latitude,
     lng: row.casts?.longitude,
-    className: `map-name-link matrix-name status-${status}`
+    className: `map-name-link matrix-name status-${safeStatus}`
   });
   const metaText = buildMatrixMetaText(row.distance_km, row.casts?.travel_minutes || row.travel_minutes);
   return `<span class="matrix-line">${nameHtml}<span class="matrix-meta">${escapeHtml(metaText)}</span></span>`;
@@ -4364,8 +4365,7 @@ function renderPlansTimeAreaMatrix() {
   ];
 
   if (!areas.length) {
-    els.plansTimeAreaMatrix.innerHTML =
-      `<div class="muted" style="padding:14px;">一覧がありません</div>`;
+    els.plansTimeAreaMatrix.innerHTML = `<div class="muted" style="padding:14px;">一覧がありません</div>`;
     return;
   }
 
@@ -4397,14 +4397,11 @@ function renderPlansTimeAreaMatrix() {
         html += `
           <td>
             <div class="matrix-card">
-              ${rows.map(row => {
-                const linkedStatus = getPlanLinkedActualStatus(row);
-                return `
-                  <div class="matrix-item">
-                    ${buildMatrixNameLine(row, linkedStatus, "destination_address")}
-                  </div>
-                `;
-              }).join("")}
+              ${rows.map(row => `
+                <div class="matrix-item">
+                  ${buildMatrixNameLine(row, getPlanLinkedActualStatus(row), "destination_address")}
+                </div>
+              `).join("")}
             </div>
           </td>
         `;
@@ -4812,51 +4809,60 @@ async function addPlanToActual() {
 function renderActualTable() {
   if (!els.actualTableWrap) return;
 
-  if (!currentActualsCache.length) {
-    els.actualTableWrap.innerHTML = `<div class="muted" style="padding:14px;">Actualがありません</div>`;
+  const actionableItems = currentActualsCache.filter(item => {
+    const status = normalizeStatus(item.status);
+    return status !== "done" && status !== "cancel";
+  });
+
+  if (!actionableItems.length) {
+    els.actualTableWrap.innerHTML = `<div class="muted" style="padding:14px;">配車決定で対応待ちのActualはありません</div>`;
     return;
   }
 
-  const hours = [...new Set(currentActualsCache.map(x => Number(x.actual_hour ?? 0)))].sort((a, b) => a - b);
+  const hours = [...new Set(actionableItems.map(x => Number(x.actual_hour ?? 0)))].sort((a, b) => a - b);
   let html = `<div class="grouped-actual-list">`;
 
   hours.forEach(hour => {
-    const hourItems = currentActualsCache.filter(x => Number(x.actual_hour ?? 0) === hour);
+    const hourItems = actionableItems.filter(x => Number(x.actual_hour ?? 0) === hour);
     const groupedAreas = getGroupedAreasByDisplay(hourItems, x => x.destination_area || "無し");
 
     html += `<div class="grouped-section">`;
     html += `<div class="grouped-hour-title">${getHourLabel(hour)}</div>`;
 
     groupedAreas.forEach(({ detailArea }) => {
+      const areaItems = hourItems.filter(
+        item => normalizeAreaLabel(item.destination_area || "無し") === detailArea
+      );
+
+      if (!areaItems.length) return;
+
       html += `<div class="grouped-area-title">${getGroupedAreaHeaderHtml(detailArea)}</div>`;
 
-      hourItems
-        .filter(item => normalizeAreaLabel(item.destination_area || "無し") === detailArea)
-        .forEach(item => {
-          html += `
-            <div class="grouped-row">
-              <div>${getHourLabel(hour)}</div>
-              <div><strong>${buildMapLinkHtml({
-               name: item.casts?.name,
-               address: item.destination_address || item.casts?.address,
-               lat: item.casts?.latitude,
-               lng: item.casts?.longitude
-               })}</strong></div>
-              <div>${escapeHtml(normalizeAreaLabel(item.destination_area || "無し"))}</div>
-              <div>${item.distance_km ?? ""}</div>
-              <div class="op-cell">
-                <div class="state-stack">
-                  <button class="btn primary actual-done-btn" data-id="${item.id}">完了</button>
-                  <button class="btn danger actual-cancel-btn" data-id="${item.id}">キャンセル</button>
-                  <span class="badge-status ${normalizeStatus(item.status)}">${escapeHtml(getStatusText(item.status))}</span>
-                </div>
-                <button class="btn ghost actual-edit-btn" data-id="${item.id}">編集</button>
-                <button class="btn ghost actual-route-btn" data-address="${escapeHtml(item.destination_address || item.casts?.address || "")}">ルート</button>
-                <button class="btn danger actual-delete-btn" data-id="${item.id}">削除</button>
+      areaItems.forEach(item => {
+        html += `
+          <div class="grouped-row">
+            <div>${getHourLabel(hour)}</div>
+            <div><strong>${buildMapLinkHtml({
+             name: item.casts?.name,
+             address: item.destination_address || item.casts?.address,
+             lat: item.casts?.latitude,
+             lng: item.casts?.longitude
+             })}</strong></div>
+            <div>${escapeHtml(normalizeAreaLabel(item.destination_area || "無し"))}</div>
+            <div>${item.distance_km ?? ""}</div>
+            <div class="op-cell">
+              <div class="state-stack">
+                <button class="btn primary actual-done-btn" data-id="${item.id}">完了</button>
+                <button class="btn danger actual-cancel-btn" data-id="${item.id}">キャンセル</button>
+                <span class="badge-status ${normalizeStatus(item.status)}">${escapeHtml(getStatusText(item.status))}</span>
               </div>
+              <button class="btn ghost actual-edit-btn" data-id="${item.id}">編集</button>
+              <button class="btn ghost actual-route-btn" data-address="${escapeHtml(item.destination_address || item.casts?.address || "")}">ルート</button>
+              <button class="btn danger actual-delete-btn" data-id="${item.id}">削除</button>
             </div>
-          `;
-        });
+          </div>
+        `;
+      });
     });
 
     html += `</div>`;
