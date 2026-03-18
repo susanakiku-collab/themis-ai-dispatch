@@ -353,6 +353,25 @@ function getMonthStartStr(dateStr) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+function compareVehicleDisplayOrder(a, b) {
+  const plateA = String(a?.plate_number || "").trim();
+  const plateB = String(b?.plate_number || "").trim();
+  const driverA = String(a?.driver_name || "").trim();
+  const driverB = String(b?.driver_name || "").trim();
+
+  const plateCompare = plateA.localeCompare(plateB, "ja", { numeric: true, sensitivity: "base" });
+  if (plateCompare !== 0) return plateCompare;
+
+  const driverCompare = driverA.localeCompare(driverB, "ja", { numeric: true, sensitivity: "base" });
+  if (driverCompare !== 0) return driverCompare;
+
+  return Number(a?.id || 0) - Number(b?.id || 0);
+}
+
+function getSortedVehiclesForDisplay(vehicles = allVehiclesCache) {
+  return [...(vehicles || [])].sort(compareVehicleDisplayOrder);
+}
+
 function getDayOfWeek(dateStr) {
   const d = new Date(dateStr);
   return d.getDay();
@@ -2212,20 +2231,33 @@ function normalizeCsvRows(rows) {
   });
 }
 
-function getVehicleMonthlyStatsMap(reportRows, targetMonth) {
+function getVehicleMonthlyStatsMap(reportRows, targetDateStr) {
   const map = new Map();
+  const cutoffDate = String(targetDateStr || todayStr());
+  const targetMonth = getMonthKey(cutoffDate);
+  const monthStart = getMonthStartStr(cutoffDate);
 
-  reportRows.forEach(row => {
-    if (getMonthKey(row.report_date) !== targetMonth) return;
-    const vehicleId = Number(row.vehicle_id);
+  (reportRows || []).forEach(row => {
+    const reportDate = String(row?.report_date || "");
+    if (!reportDate) return;
+    if (getMonthKey(reportDate) !== targetMonth) return;
+    if (reportDate < monthStart || reportDate > cutoffDate) return;
+
+    const vehicleId = Number(row?.vehicle_id || row?.vehicles?.id || 0);
+    if (!vehicleId) return;
+
+    const distance = Number(row?.distance_km || 0);
     const prev = map.get(vehicleId) || {
       totalDistance: 0,
       workedDays: 0,
       avgDistance: 0
     };
-    prev.totalDistance += Number(row.distance_km || 0);
-    prev.workedDays += 1;
+
+    prev.totalDistance += distance;
+    if (distance > 0) prev.workedDays += 1;
     prev.avgDistance = prev.workedDays > 0 ? prev.totalDistance / prev.workedDays : 0;
+    prev.totalDistance = Number(prev.totalDistance.toFixed(1));
+    prev.avgDistance = Number(prev.avgDistance.toFixed(1));
     map.set(vehicleId, prev);
   });
 
@@ -2419,8 +2451,8 @@ function renderHomeSummary() {
 function renderHomeMonthlyVehicleList() {
   if (!els.homeMonthlyVehicleList) return;
 
-  const monthKey = getMonthKey(els.dispatchDate?.value || todayStr());
-  const statsMap = getVehicleMonthlyStatsMap(currentDailyReportsCache, monthKey);
+  const targetDate = els.dispatchDate?.value || todayStr();
+  const statsMap = getVehicleMonthlyStatsMap(currentDailyReportsCache, targetDate);
 
   els.homeMonthlyVehicleList.innerHTML = "";
 
@@ -2429,7 +2461,7 @@ function renderHomeMonthlyVehicleList() {
     return;
   }
 
-  allVehiclesCache.forEach(vehicle => {
+  getSortedVehiclesForDisplay().forEach(vehicle => {
     const stats = statsMap.get(Number(vehicle.id)) || {
       totalDistance: 0,
       workedDays: 0,
@@ -3051,8 +3083,8 @@ async function loadVehicles() {
 function renderVehiclesTable() {
   if (!els.vehiclesTableBody) return;
 
-  const monthKey = getMonthKey(els.dispatchDate?.value || todayStr());
-  const statsMap = getVehicleMonthlyStatsMap(currentDailyReportsCache, monthKey);
+  const targetDate = els.dispatchDate?.value || todayStr();
+  const statsMap = getVehicleMonthlyStatsMap(currentDailyReportsCache, targetDate);
 
   els.vehiclesTableBody.innerHTML = "";
 
@@ -3061,7 +3093,7 @@ function renderVehiclesTable() {
     return;
   }
 
-  allVehiclesCache.forEach(vehicle => {
+  getSortedVehiclesForDisplay().forEach(vehicle => {
     const stats = statsMap.get(Number(vehicle.id)) || {
       totalDistance: 0,
       workedDays: 0,
@@ -3127,13 +3159,243 @@ async function fetchDriverMileageRows(startDate, endDate) {
 function normalizeMileageExportRows(rows) {
   return rows.map(row => ({
     report_date: row.report_date || "",
+    vehicle_id: Number(row.vehicle_id || row.vehicles?.id || 0),
     driver_name: row.driver_name || row.vehicles?.driver_name || "-",
-    plate_number: row.vehicles?.plate_number || "-",
+    plate_number: row.vehicles?.plate_number || row.plate_number || "-",
     distance_km: Number(row.distance_km || 0),
     worked_flag: Number(row.distance_km || 0) > 0 ? 1 : 0,
     note: row.note || ""
   }));
 }
+
+
+function buildMileageCalendarRows(rows, startDate, endDate) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
+  const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+
+  const visibleStart = start < monthStart ? monthStart : start;
+  const visibleEnd = end > monthEnd ? monthEnd : end;
+
+  const firstHalfDays = [];
+  const secondHalfDays = [];
+
+  for (let day = 1; day <= monthEnd.getDate(); day++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), day);
+
+    if (day <= 16) {
+      if (d < visibleStart) continue;
+      if (day > 16) continue;
+    } else {
+      if (d < visibleStart) continue;
+    }
+
+    const target = day <= 16 ? firstHalfDays : secondHalfDays;
+    target.push({
+      day,
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+      label: `${day}日`
+    });
+  }
+
+  const grouped = new Map();
+
+  (rows || []).forEach(row => {
+    const vehicleId = Number(row.vehicle_id || 0);
+    const driver = String(row.driver_name || "-").trim() || "-";
+    const plateNumber = String(row.plate_number || "").trim();
+    const key = vehicleId > 0 ? `vehicle:${vehicleId}` : `name:${driver}__${plateNumber}`;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        vehicle_id: vehicleId,
+        plate_number: plateNumber,
+        driver_name: driver,
+        byDate: new Map(),
+        total_distance_km: 0,
+        worked_days: 0,
+        avg_distance_km: 0
+      });
+    }
+
+    const item = grouped.get(key);
+    const dateKey = String(row.report_date || "");
+    const distance = Number(row.distance_km || 0);
+    item.byDate.set(dateKey, Number(((item.byDate.get(dateKey) || 0) + distance).toFixed(1)));
+    item.total_distance_km += distance;
+  });
+
+  const vehicleOrderMap = new Map(
+    getSortedVehiclesForDisplay().map((vehicle, index) => [Number(vehicle.id || 0), index])
+  );
+
+  const drivers = [...grouped.values()].sort((a, b) => {
+    const orderA = vehicleOrderMap.has(Number(a.vehicle_id || 0)) ? vehicleOrderMap.get(Number(a.vehicle_id || 0)) : Number.MAX_SAFE_INTEGER;
+    const orderB = vehicleOrderMap.has(Number(b.vehicle_id || 0)) ? vehicleOrderMap.get(Number(b.vehicle_id || 0)) : Number.MAX_SAFE_INTEGER;
+    if (orderA !== orderB) return orderA - orderB;
+
+    const plateCompare = String(a.plate_number || "").localeCompare(String(b.plate_number || ""), "ja", { numeric: true, sensitivity: "base" });
+    if (plateCompare !== 0) return plateCompare;
+
+    return String(a.driver_name || "").localeCompare(String(b.driver_name || ""), "ja", { numeric: true, sensitivity: "base" });
+  });
+
+  drivers.forEach(driver => {
+    driver.worked_days = [...driver.byDate.values()].filter(v => Number(v || 0) > 0).length;
+    driver.avg_distance_km = driver.worked_days ? driver.total_distance_km / driver.worked_days : 0;
+    driver.total_distance_km = Number(driver.total_distance_km.toFixed(1));
+    driver.avg_distance_km = Number(driver.avg_distance_km.toFixed(1));
+  });
+
+  return {
+    firstHalfDays,
+    secondHalfDays,
+    drivers,
+    monthLabel: `${start.getFullYear()}年${start.getMonth() + 1}月`,
+    visibleStart,
+    visibleEnd
+  };
+}
+
+function renderMileageMatrixSection(title, days, drivers, options = {}) {
+  if (!days.length) {
+    return `
+      <div class="mileage-matrix-section">
+        <div class="grouped-hour-title">${escapeHtml(title)}</div>
+        <div class="muted" style="padding:14px;">表示対象の日付がありません</div>
+      </div>
+    `;
+  }
+
+  const showOverallColumns = Boolean(options.showOverallColumns);
+
+  const headerDays = days.map(day => `<th>${escapeHtml(day.label)}</th>`).join("");
+  const extraHeader = showOverallColumns
+    ? `
+      <th>全合計距離</th>
+      <th>全出勤日数</th>
+      <th>全平均距離</th>
+    `
+    : "";
+
+  const bodyRows = drivers.map(driver => {
+    const sectionValues = days.map(day => Number(driver.byDate.get(day.key) || 0));
+    const sectionDistance = sectionValues.reduce((sum, value) => sum + value, 0);
+    const sectionWorkedDays = sectionValues.filter(value => value > 0).length;
+    const sectionAvgDistance = sectionWorkedDays > 0 ? sectionDistance / sectionWorkedDays : 0;
+
+    const cells = sectionValues.map(value =>
+      `<td class="mileage-day-cell">${value > 0 ? `${value.toFixed(1)}km` : "-"}</td>`
+    ).join("");
+
+    const extraOverallCells = showOverallColumns
+      ? `
+        <td>${Number(driver.total_distance_km || 0).toFixed(1)}km</td>
+        <td>${Number(driver.worked_days || 0)}日</td>
+        <td>${Number(driver.avg_distance_km || 0).toFixed(1)}km</td>
+      `
+      : "";
+
+    return `
+      <tr>
+        <td class="mileage-driver-cell">${escapeHtml(driver.driver_name || "-")}</td>
+        ${cells}
+        <td>${sectionDistance.toFixed(1)}km</td>
+        <td>${sectionWorkedDays}日</td>
+        <td>${sectionAvgDistance.toFixed(1)}km</td>
+        ${extraOverallCells}
+      </tr>
+    `;
+  }).join("");
+
+  const dailyTotals = days.map(day =>
+    drivers.reduce((sum, driver) => sum + Number(driver.byDate.get(day.key) || 0), 0)
+  );
+  const dailyWorkedCounts = days.map(day =>
+    drivers.reduce((count, driver) => count + (Number(driver.byDate.get(day.key) || 0) > 0 ? 1 : 0), 0)
+  );
+  const dailyAverages = dailyTotals.map((total, index) =>
+    dailyWorkedCounts[index] > 0 ? total / dailyWorkedCounts[index] : 0
+  );
+
+  const footerTotalCells = dailyTotals
+    .map(value => `<td class="mileage-day-cell mileage-summary-cell">${value > 0 ? `${value.toFixed(1)}km` : "-"}</td>`)
+    .join("");
+  const footerAverageCells = dailyAverages
+    .map(value => `<td class="mileage-day-cell mileage-summary-cell">${value > 0 ? `${value.toFixed(1)}km` : "-"}</td>`)
+    .join("");
+
+  const sectionTotalDistance = dailyTotals.reduce((sum, value) => sum + Number(value || 0), 0);
+  const sectionWorkedDays = dailyWorkedCounts.reduce((sum, value) => sum + Number(value || 0), 0);
+  const sectionAverageDistance = sectionWorkedDays > 0 ? sectionTotalDistance / sectionWorkedDays : 0;
+
+  const overallTotalDistance = drivers.reduce((sum, driver) => sum + Number(driver.total_distance_km || 0), 0);
+  const overallWorkedDays = drivers.reduce((sum, driver) => sum + Number(driver.worked_days || 0), 0);
+  const overallAvgDistance = overallWorkedDays > 0 ? overallTotalDistance / overallWorkedDays : 0;
+
+  const footerOverallCells = showOverallColumns
+    ? `
+      <td class="mileage-summary-cell">${overallTotalDistance.toFixed(1)}km</td>
+      <td class="mileage-summary-cell">${overallWorkedDays}日</td>
+      <td class="mileage-summary-cell">${overallAvgDistance.toFixed(1)}km</td>
+    `
+    : "";
+
+  const footerAverageOverallCells = showOverallColumns
+    ? `
+      <td class="mileage-summary-cell">${drivers.length ? (overallTotalDistance / drivers.length).toFixed(1) : "0.0"}km</td>
+      <td class="mileage-summary-cell">${drivers.length ? (overallWorkedDays / drivers.length).toFixed(1) : "0.0"}日</td>
+      <td class="mileage-summary-cell">${overallAvgDistance.toFixed(1)}km</td>
+    `
+    : "";
+
+  const colspan = days.length + 4 + (showOverallColumns ? 3 : 0);
+
+  const footerRows = `
+    <tr class="mileage-summary-row">
+      <td class="mileage-driver-cell">日別合計</td>
+      ${footerTotalCells}
+      <td class="mileage-summary-cell">${sectionTotalDistance.toFixed(1)}km</td>
+      <td class="mileage-summary-cell">${sectionWorkedDays}日</td>
+      <td class="mileage-summary-cell">${sectionAverageDistance.toFixed(1)}km</td>
+      ${footerOverallCells}
+    </tr>
+    <tr class="mileage-summary-row">
+      <td class="mileage-driver-cell">日別平均</td>
+      ${footerAverageCells}
+      <td class="mileage-summary-cell">${drivers.length ? (sectionTotalDistance / drivers.length).toFixed(1) : "0.0"}km</td>
+      <td class="mileage-summary-cell">-</td>
+      <td class="mileage-summary-cell">${sectionAverageDistance.toFixed(1)}km</td>
+      ${footerAverageOverallCells}
+    </tr>
+  `;
+
+  return `
+    <div class="mileage-matrix-section">
+      <div class="grouped-hour-title">${escapeHtml(title)}</div>
+      <div class="table-wrap mileage-matrix-wrap">
+        <table class="matrix-table mileage-matrix-table">
+          <thead>
+            <tr>
+              <th>ドライバー</th>
+              ${headerDays}
+              <th>合計距離</th>
+              <th>合計出勤数</th>
+              <th>1日平均距離</th>
+              ${extraHeader}
+            </tr>
+          </thead>
+          <tbody>
+            ${bodyRows || `<tr><td colspan="${colspan}" class="muted">データがありません</td></tr>`}
+            ${footerRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 
 function renderMileageReportTable(rows) {
   if (!els.mileageReportTableWrap) return;
@@ -3144,39 +3406,20 @@ function renderMileageReportTable(rows) {
     return;
   }
 
-  const grouped = new Map();
+  const startDate = els.mileageReportStartDate?.value || rows[0]?.report_date || todayStr();
+  const endDate = els.mileageReportEndDate?.value || rows[rows.length - 1]?.report_date || todayStr();
+  const calendar = buildMileageCalendarRows(rows, startDate, endDate);
 
-  rows.forEach(row => {
-    const driver = row.driver_name || "-";
-    if (!grouped.has(driver)) grouped.set(driver, []);
-    grouped.get(driver).push(row);
+  const rangeLabel = `${calendar.monthLabel} / ${startDate.replaceAll('-', '/')} ～ ${endDate.replaceAll('-', '/')}`;
+
+  let html = `<div class="grouped-plan-list mileage-report-grid">`;
+  html += `<div class="grouped-hour-title">${escapeHtml(rangeLabel)}</div>`;
+  html += renderMileageMatrixSection('1日～16日', calendar.firstHalfDays, calendar.drivers);
+  html += renderMileageMatrixSection('17日～31日', calendar.secondHalfDays, calendar.drivers, {
+    showOverallColumns: true
   });
-
-  let html = `<div class="grouped-plan-list">`;
-
-  [...grouped.entries()].forEach(([driver, driverRows]) => {
-    const totalDistance = driverRows.reduce((sum, row) => sum + Number(row.distance_km || 0), 0);
-    html += `
-      <div class="grouped-section">
-        <div class="grouped-hour-title">
-          ${escapeHtml(driver)} / ${driverRows.length}日 / 合計 ${totalDistance.toFixed(1)}km / 1日平均 ${(driverRows.length ? totalDistance / driverRows.length : 0).toFixed(1)}km
-        </div>
-    `;
-
-    driverRows.forEach(row => {
-      html += `
-        <div class="grouped-row">
-          <div>${escapeHtml(row.report_date || "")}</div>
-          <div><strong>${escapeHtml(row.driver_name || "-")}</strong></div>
-          <div>${Number(row.distance_km || 0).toFixed(1)}km</div>
-        </div>
-      `;
-    });
-
-    html += `</div>`;
-  });
-
   html += `</div>`;
+
   els.mileageReportTableWrap.innerHTML = html;
 }
 
@@ -3262,10 +3505,14 @@ function buildMileageMatrixRows(rows, startDate, endDate) {
     const item = grouped.get(driver);
     const key = row.report_date || "";
     const distance = Number(row.distance_km || 0);
+    const prevDistance = Number(item.byDate.get(key) || 0);
 
-    item.byDate.set(key, distance);
+    item.byDate.set(key, Number((prevDistance + distance).toFixed(1)));
     item.total_distance_km += distance;
-    if (Number(row.worked_flag || 0)) item.days += 1;
+  });
+
+  grouped.forEach(item => {
+    item.days = [...item.byDate.values()].filter(value => Number(value || 0) > 0).length;
   });
 
   const sortedDrivers = [...grouped.values()].sort((a, b) =>
@@ -3275,7 +3522,7 @@ function buildMileageMatrixRows(rows, startDate, endDate) {
   const aoa = [];
   aoa.push([`${startDate.replaceAll("-", "/")}〜${endDate.replaceAll("-", "/")}`]);
 
-  const header = ["No", "名前", ...dates.map(formatMileageSheetDate), "月間走行距離", "出勤日数", "1日平均走行距離"];
+  const header = ["No", "名前", ...dates.map(formatMileageSheetDate), "合計距離", "出勤日数", "平均距離"];
   aoa.push(header);
 
   let grandTotalDistance = 0;
@@ -3285,15 +3532,16 @@ function buildMileageMatrixRows(rows, startDate, endDate) {
   sortedDrivers.forEach((row, index) => {
     const daily = dates.map(date => {
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-      const value = row.byDate.get(key);
+      const value = Number(row.byDate.get(key) || 0);
 
-      if (value != null && value !== 0) {
-        dailyTotals.set(key, Number((dailyTotals.get(key) || 0) + Number(value || 0)));
-        return Number(Number(value).toFixed(1));
+      if (value > 0) {
+        dailyTotals.set(key, Number((dailyTotals.get(key) || 0) + value));
+        return Number(value.toFixed(1));
       }
       return "";
     });
 
+    const totalDistance = Number(row.total_distance_km.toFixed(1));
     const avg = row.days ? row.total_distance_km / row.days : 0;
 
     grandTotalDistance += row.total_distance_km;
@@ -3303,7 +3551,7 @@ function buildMileageMatrixRows(rows, startDate, endDate) {
       index + 1,
       row.driver_name,
       ...daily,
-      Number(row.total_distance_km.toFixed(1)),
+      totalDistance,
       row.days,
       Number(avg.toFixed(1))
     ]);
@@ -3313,13 +3561,12 @@ function buildMileageMatrixRows(rows, startDate, endDate) {
   const overallDaily = dates.map(date => {
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     const total = Number(dailyTotals.get(key) || 0);
-    return total ? Number(total.toFixed(1)) : "";
+    return total > 0 ? Number(total.toFixed(1)) : "";
   });
 
-  aoa.push([]);
   aoa.push([
     "",
-    "全体",
+    "日別合計",
     ...overallDaily,
     Number(grandTotalDistance.toFixed(1)),
     grandWorkedDays,
@@ -3349,12 +3596,121 @@ function applyMileageMatrixSheetStyle(sheet, startDate, endDate) {
   }
 }
 
-async function exportDriverMileageReportXlsx() {
-  if (!window.XLSX) {
-    alert("Excel出力ライブラリの読み込みに失敗しました");
-    return;
-  }
 
+function buildMileageCsvSectionRows(title, days, drivers, options = {}) {
+  const showOverallColumns = Boolean(options.showOverallColumns);
+  const rows = [];
+
+  rows.push([title]);
+
+  const header = [
+    "ドライバー",
+    ...days.map(day => day.label),
+    "合計距離",
+    "合計出勤数",
+    "1日平均距離"
+  ];
+
+  if (showOverallColumns) {
+    header.push("全合計距離", "全出勤日数", "全平均距離");
+  }
+  rows.push(header);
+
+  drivers.forEach(driver => {
+    const sectionValues = days.map(day => Number(driver.byDate.get(day.key) || 0));
+    const sectionDistance = sectionValues.reduce((sum, value) => sum + value, 0);
+    const sectionWorkedDays = sectionValues.filter(value => value > 0).length;
+    const sectionAvgDistance = sectionWorkedDays > 0 ? sectionDistance / sectionWorkedDays : 0;
+
+    const row = [
+      driver.driver_name || "-",
+      ...sectionValues.map(value => value > 0 ? Number(value.toFixed(1)) : ""),
+      Number(sectionDistance.toFixed(1)),
+      sectionWorkedDays,
+      Number(sectionAvgDistance.toFixed(1))
+    ];
+
+    if (showOverallColumns) {
+      row.push(
+        Number(Number(driver.total_distance_km || 0).toFixed(1)),
+        Number(driver.worked_days || 0),
+        Number(Number(driver.avg_distance_km || 0).toFixed(1))
+      );
+    }
+
+    rows.push(row);
+  });
+
+  const dailyTotals = days.map(day =>
+    drivers.reduce((sum, driver) => sum + Number(driver.byDate.get(day.key) || 0), 0)
+  );
+  const dailyWorkedCounts = days.map(day =>
+    drivers.reduce((count, driver) => count + (Number(driver.byDate.get(day.key) || 0) > 0 ? 1 : 0), 0)
+  );
+  const dailyAverages = dailyTotals.map((total, index) =>
+    dailyWorkedCounts[index] > 0 ? total / dailyWorkedCounts[index] : 0
+  );
+
+  const sectionTotalDistance = dailyTotals.reduce((sum, value) => sum + Number(value || 0), 0);
+  const sectionWorkedDays = dailyWorkedCounts.reduce((sum, value) => sum + Number(value || 0), 0);
+  const sectionAverageDistance = sectionWorkedDays > 0 ? sectionTotalDistance / sectionWorkedDays : 0;
+
+  const overallTotalDistance = drivers.reduce((sum, driver) => sum + Number(driver.total_distance_km || 0), 0);
+  const overallWorkedDays = drivers.reduce((sum, driver) => sum + Number(driver.worked_days || 0), 0);
+  const overallAvgDistance = overallWorkedDays > 0 ? overallTotalDistance / overallWorkedDays : 0;
+
+  const totalRow = [
+    "日別合計",
+    ...dailyTotals.map(value => value > 0 ? Number(value.toFixed(1)) : ""),
+    Number(sectionTotalDistance.toFixed(1)),
+    sectionWorkedDays,
+    Number(sectionAverageDistance.toFixed(1))
+  ];
+  if (showOverallColumns) {
+    totalRow.push(
+      Number(overallTotalDistance.toFixed(1)),
+      overallWorkedDays,
+      Number(overallAvgDistance.toFixed(1))
+    );
+  }
+  rows.push(totalRow);
+
+  const avgRow = [
+    "日別平均",
+    ...dailyAverages.map(value => value > 0 ? Number(value.toFixed(1)) : ""),
+    Number((drivers.length ? sectionTotalDistance / drivers.length : 0).toFixed(1)),
+    "",
+    Number(sectionAverageDistance.toFixed(1))
+  ];
+  if (showOverallColumns) {
+    avgRow.push(
+      Number((drivers.length ? overallTotalDistance / drivers.length : 0).toFixed(1)),
+      Number((drivers.length ? overallWorkedDays / drivers.length : 0).toFixed(1)),
+      Number(overallAvgDistance.toFixed(1))
+    );
+  }
+  rows.push(avgRow);
+
+  return rows;
+}
+
+function buildMileageMatrixCsvRows(rows, startDate, endDate) {
+  const calendar = buildMileageCalendarRows(rows, startDate, endDate);
+  const result = [];
+
+  result.push([`${startDate.replaceAll("-", "/")}〜${endDate.replaceAll("-", "/")}`]);
+  result.push([]);
+
+  result.push(...buildMileageCsvSectionRows("1日～16日", calendar.firstHalfDays, calendar.drivers));
+  result.push([]);
+  result.push(...buildMileageCsvSectionRows("17日～月末", calendar.secondHalfDays, calendar.drivers, {
+    showOverallColumns: true
+  }));
+
+  return result;
+}
+
+async function exportDriverMileageReportCsv() {
   if (!currentMileageExportRows.length) {
     await previewDriverMileageReport();
     if (!currentMileageExportRows.length) return;
@@ -3363,36 +3719,18 @@ async function exportDriverMileageReportXlsx() {
   const startDate = els.mileageReportStartDate?.value || todayStr();
   const endDate = els.mileageReportEndDate?.value || todayStr();
 
-  const matrixAoa = buildMileageMatrixRows(currentMileageExportRows, startDate, endDate);
-  const matrixSheet = window.XLSX.utils.aoa_to_sheet(matrixAoa);
-  applyMileageMatrixSheetStyle(matrixSheet, startDate, endDate);
+  const aoa = buildMileageMatrixCsvRows(currentMileageExportRows, startDate, endDate);
+  const csv = aoa
+    .map(row => row.map(value => csvEscape(value ?? "")).join(","))
+    .join("\n");
 
-  const dailyRowsJa = currentMileageExportRows.map(row => ({
-    日付: row.report_date || "",
-    ドライバー名: row.driver_name || "-",
-    走行距離_km: Number(row.distance_km || 0),
-    出勤: Number(row.worked_flag || 0) ? "出勤" : "",
-    メモ: row.note || ""
-  }));
-
-  const summaryRowsJa = buildMileageSummaryRows(currentMileageExportRows).map((row, index) => ({
-    No: index + 1,
-    名前: row.driver_name,
-    月間走行距離: Number(row.total_distance_km || 0),
-    出勤日数: Number(row.days || 0),
-    "1日平均走行距離": Number(row.avg_distance_km || 0)
-  }));
-
-  const workbook = window.XLSX.utils.book_new();
-  const dailySheet = window.XLSX.utils.json_to_sheet(dailyRowsJa);
-  const summarySheet = window.XLSX.utils.json_to_sheet(summaryRowsJa);
-
-  window.XLSX.utils.book_append_sheet(workbook, matrixSheet, "原本形式");
-  window.XLSX.utils.book_append_sheet(workbook, dailySheet, "日別一覧");
-  window.XLSX.utils.book_append_sheet(workbook, summarySheet, "ドライバー別集計");
-
-  window.XLSX.writeFile(workbook, `driver_mileage_${startDate}_${endDate}.xlsx`);
+  downloadTextFile(`driver_mileage_matrix_${startDate}_${endDate}.csv`, csv, "text/csv;charset=utf-8");
 }
+
+async function exportDriverMileageReportXlsx() {
+  return exportDriverMileageReportCsv();
+}
+
 
 function exportVehiclesCsv() {
   const headers = [
@@ -5164,8 +5502,8 @@ function applyManualLastVehicleToAssignments(assignments, vehicles) {
 
 
 function buildMonthlyDistanceMapForCurrentMonth() {
-  const monthKey = getMonthKey(els.dispatchDate?.value || todayStr());
-  return getVehicleMonthlyStatsMap(currentDailyReportsCache, monthKey);
+  const targetDate = els.dispatchDate?.value || todayStr();
+  return getVehicleMonthlyStatsMap(currentDailyReportsCache, targetDate);
 }
 
 
