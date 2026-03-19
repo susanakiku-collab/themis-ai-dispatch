@@ -541,6 +541,69 @@ function diagnoseHourWindow(targetHour) {
   };
 }
 
+function getDiagnosisReasonTokens(diag) {
+  const tokens = [];
+  if (!diag) return tokens;
+  if (Number(diag.totalCapacity || 0) < Number(diag.castCount || 0)) {
+    tokens.push({ key: 'capacity', label: `定員 不足${Math.max(0, Number(diag.castCount || 0) - Number(diag.totalCapacity || 0))}名`, tone: 'danger' });
+  }
+  if (Number(diag.castCount || 0) > 0 && Number(diag.areaGroupCount || 0) > Number(diag.effectiveVehicleCount || 0)) {
+    tokens.push({ key: 'area', label: `方面 ${diag.areaGroupCount}系統`, tone: 'warn' });
+  }
+  if (Array.isArray(diag.deadVehicleNames) && diag.deadVehicleNames.length) {
+    tokens.push({ key: 'dead', label: `車両ロスト ${diag.deadVehicleNames.length}台`, tone: 'warn' });
+  }
+  if (!tokens.length) tokens.push({ key: 'ok', label: '問題なし', tone: 'ok' });
+  return tokens;
+}
+
+function getDiagnosisHeadline(diag, mode = 'default') {
+  if (!diag) return '診断なし';
+  if (Number(diag.totalCapacity || 0) < Number(diag.castCount || 0)) return '定員オーバー見込み';
+  if (Number(diag.castCount || 0) > 0 && Number(diag.areaGroupCount || 0) > Number(diag.effectiveVehicleCount || 0)) {
+    return mode === 'simulation' ? '最小限統合が必要' : '車両不足見込み';
+  }
+  if (Array.isArray(diag.deadVehicleNames) && diag.deadVehicleNames.length) return '次便影響あり';
+  return '成立';
+}
+
+function renderDiagnosisCardsHtml(diagList, options = {}) {
+  const mode = options.mode || 'default';
+  if (!Array.isArray(diagList) || !diagList.length) return `<div class="hybrid-diagnosis muted">診断対象がありません</div>`;
+  return `
+    <div class="diagnosis-cards-grid">
+      ${diagList.map(diag => {
+        if (!diag) return '';
+        const statusClass = diag.statusKey || 'ok';
+        const reasonTokens = getDiagnosisReasonTokens(diag);
+        const deadText = Array.isArray(diag.deadVehicleNames) && diag.deadVehicleNames.length ? escapeHtml(diag.deadVehicleNames.join(' / ')) : 'なし';
+        return `
+          <article class="diagnosis-card ${statusClass}">
+            <div class="diagnosis-card-head">
+              <div class="diagnosis-card-label">${escapeHtml(diag.label || getHourLabel(diag.hour))}</div>
+              <div class="diagnosis-card-status">${escapeHtml(diag.statusText || 'OK')}</div>
+            </div>
+            <div class="diagnosis-card-main">${escapeHtml(getDiagnosisHeadline(diag, mode))}</div>
+            <div class="diagnosis-stat-grid">
+              <div class="diagnosis-stat"><span class="k">👤</span><span class="v">${Number(diag.castCount || 0)}名</span></div>
+              <div class="diagnosis-stat"><span class="k">🚗</span><span class="v">${Number(diag.effectiveVehicleCount || 0)}台</span></div>
+              <div class="diagnosis-stat"><span class="k">🪑</span><span class="v">${Number(diag.totalCapacity || 0)}席</span></div>
+              <div class="diagnosis-stat"><span class="k">🧭</span><span class="v">${Number(diag.areaGroupCount || 0)}系統</span></div>
+            </div>
+            <div class="diagnosis-reason-row">
+              ${reasonTokens.map(token => `<span class="diagnosis-reason-chip ${escapeHtml(token.tone)}">${escapeHtml(token.label)}</span>`).join('')}
+            </div>
+            <div class="diagnosis-deadline-row">
+              <span class="muted">次便NG車両</span>
+              <strong>${deadText}</strong>
+            </div>
+          </article>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 function buildSummaryItemsHtml(items) {
   return items.map(item => `
     <div class="hybrid-summary-item">
@@ -568,17 +631,12 @@ function renderOperationAndSimulationUI() {
   }
 
   if (els.operationDiagnosis) {
-    const cls = nextDiag?.statusKey === "danger" || lastDiag?.statusKey === "danger"
-      ? "danger"
-      : (nextDiag?.statusKey === "warn" || lastDiag?.statusKey === "warn" ? "warn" : "ok");
-    const nextDead = nextDiag?.deadVehicleNames?.length ? nextDiag.deadVehicleNames.join(" / ") : "なし";
-    els.operationDiagnosis.className = `hybrid-diagnosis ${cls}`;
-    els.operationDiagnosis.innerHTML = `
-      今便: ${getHourLabel(operationDiag.hour)} / ${operationDiag.castCount}名 / 実効${operationDiag.effectiveVehicleCount}台 / 総定員${operationDiag.totalCapacity} / ${operationDiag.statusText}<br>
-      次便: ${nextDiag ? `${getHourLabel(nextDiag.hour)} / ${nextDiag.castCount}名 / 実効${nextDiag.effectiveVehicleCount}台 / 総定員${nextDiag.totalCapacity} / ${nextDiag.statusText}` : '-'}<br>
-      ラスト便: ${lastDiag ? `${getHourLabel(lastDiag.hour)} / ${lastDiag.castCount}名 / 実効${lastDiag.effectiveVehicleCount}台 / 総定員${lastDiag.totalCapacity} / ${lastDiag.statusText}` : '-'}<br>
-      次便NG車両: ${escapeHtml(nextDead)}
-    `;
+    els.operationDiagnosis.className = 'hybrid-diagnosis diagnosis-card-wrap';
+    els.operationDiagnosis.innerHTML = renderDiagnosisCardsHtml([
+      { ...operationDiag, label: '今便' },
+      nextDiag ? { ...nextDiag, label: '次便' } : null,
+      lastDiag ? { ...lastDiag, label: 'ラスト便' } : null
+    ].filter(Boolean));
   }
 
   const hourOptions = getUnifiedHourSet();
@@ -602,12 +660,10 @@ function runSlotDiagnosisPreview() {
   const diag = diagnoseHourWindow(hour);
   lastSimulationResult = { type: 'diagnosis', hour, diag };
   if (els.simulationDiagnosis) {
-    els.simulationDiagnosis.className = `hybrid-diagnosis ${diag.statusKey}`;
-    els.simulationDiagnosis.innerHTML = `
-      試算対象便: ${getHourLabel(diag.hour)} / 対象${diag.castCount}名 / 実効${diag.effectiveVehicleCount}台 / 総定員${diag.totalCapacity} / 方面系統${diag.areaGroupCount}<br>
-      判定: ${diag.statusText}${diag.shortageCount > 0 ? ` / 未配車見込み ${diag.shortageCount}名` : ''}<br>
-      次便NG車両: ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}
-    `;
+    els.simulationDiagnosis.className = 'hybrid-diagnosis diagnosis-card-wrap';
+    els.simulationDiagnosis.innerHTML = renderDiagnosisCardsHtml([
+      { ...diag, label: '試算対象' }
+    ], { mode: 'simulation' });
   }
   if (els.simulationPreview) {
     if (!diag.rows.length) {
@@ -685,12 +741,18 @@ function runSimulationDispatchPreview() {
   const diag = diagnoseHourWindow(hour);
   lastSimulationResult = { type: 'dispatch', hour, diag, unassignedCount: unassigned.length };
   if (els.simulationDiagnosis) {
-    const cls = unassigned.length > 0 || diag.statusKey === 'danger' ? 'danger' : (diag.statusKey === 'warn' ? 'warn' : 'ok');
-    els.simulationDiagnosis.className = `hybrid-diagnosis ${cls}`;
-    els.simulationDiagnosis.innerHTML = `
-      試算対象便: ${getHourLabel(hour)} / 実効${vehicles.length}台 / 総定員${diag.totalCapacity} / 判定 ${diag.statusText}<br>
-      ${unassigned.length ? `未配車見込み ${unassigned.length}名` : '未配車見込み 0名'} / 次便NG車両 ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}
-    `;
+    const diagForRender = {
+      ...diag,
+      label: '試算対象',
+      castCount: diag.castCount,
+      totalCapacity: diag.totalCapacity,
+      effectiveVehicleCount: vehicles.length,
+      statusKey: (unassigned.length > 0 || diag.statusKey === 'danger') ? 'danger' : (diag.statusKey === 'warn' ? 'warn' : 'ok'),
+      statusText: unassigned.length > 0 ? `未配車見込み ${unassigned.length}名` : diag.statusText,
+      shortageCount: Math.max(Number(diag.shortageCount || 0), unassigned.length)
+    };
+    els.simulationDiagnosis.className = 'hybrid-diagnosis diagnosis-card-wrap';
+    els.simulationDiagnosis.innerHTML = renderDiagnosisCardsHtml([diagForRender], { mode: 'simulation' });
   }
   if (els.simulationPreview) {
     els.simulationPreview.className = 'simulation-preview';
