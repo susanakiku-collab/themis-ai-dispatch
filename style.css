@@ -1937,3 +1937,190 @@ img, table, input, select, textarea, button{
     min-width:980px;
   }
 }
+
+
+.list-toggle-block{
+  margin-top:14px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:18px;
+  background:rgba(255,255,255,.02);
+  padding:12px;
+}
+
+.list-toggle-block summary{
+  list-style:none;
+  cursor:pointer;
+  font-weight:800;
+  color:#f4f8ff;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  user-select:none;
+}
+
+.list-toggle-block summary::-webkit-details-marker{
+  display:none;
+}
+
+.list-toggle-block summary::before{
+  content:"▶";
+  font-size:12px;
+  color:#b9c7da;
+  transition:transform .18s ease;
+}
+
+.list-toggle-block[open] summary::before{
+  transform:rotate(90deg);
+}
+
+.list-toggle-block .table-wrap{
+  margin-top:12px;
+}
+
+.cast-list-toggle:not([open]) .table-wrap{
+  display:none;
+}
+
+.daily-hybrid-panel {
+  margin: 16px 0 6px;
+}
+
+.hybrid-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.hybrid-card {
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.hybrid-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.hybrid-card-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.hybrid-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.hybrid-summary-item {
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.hybrid-summary-label {
+  color: #a9b4c5;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.hybrid-summary-value {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.hybrid-diagnosis {
+  line-height: 1.8;
+  font-size: 13px;
+}
+
+.hybrid-diagnosis.ok {
+  color: #bfe9cf;
+}
+
+.hybrid-diagnosis.warn {
+  color: #ffe08a;
+}
+
+.hybrid-diagnosis.danger {
+  color: #ffb0b0;
+}
+
+.hybrid-sim-controls {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.simulation-preview {
+  margin-top: 10px;
+  background: rgba(255,255,255,.03);
+  border: 1px dashed rgba(255,255,255,.10);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.sim-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.sim-preview-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.sim-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.sim-preview-card {
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.sim-preview-card h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.sim-preview-meta {
+  color: #a9b4c5;
+  font-size: 12px;
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.sim-preview-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-top: 1px dashed rgba(255,255,255,.08);
+}
+
+.sim-preview-row:first-of-type {
+  border-top: 0;
+}
+
+.chip.subtle {
+  background: rgba(255,255,255,.06);
+  color: #d5dbe6;
+}
