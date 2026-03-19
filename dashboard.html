@@ -159,21 +159,24 @@
             <input id="csvFileInput" type="file" accept=".csv,text/csv" class="hidden" />
           </div>
 
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>氏名</th>
-                  <th>住所</th>
-                  <th>方面</th>
-                  <th>想定距離(km)</th>
-                  <th>メモ</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="castsTableBody"></tbody>
-            </table>
-          </div>
+          <details class="list-toggle-block cast-list-toggle">
+            <summary>キャスト一覧を表示</summary>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>氏名</th>
+                    <th>住所</th>
+                    <th>方面</th>
+                    <th>想定距離(km)</th>
+                    <th>メモ</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="castsTableBody"></tbody>
+              </table>
+            </div>
+          </details>
         </section>
       </section>
 
@@ -323,7 +326,7 @@
               <label>&nbsp;</label>
               <div class="action-row">
                 <button id="previewMileageReportBtn" class="btn ghost">一覧表示</button>
-                <button id="exportMileageReportBtn" class="btn primary">CSV出力</button>
+                <button id="exportMileageReportBtn" class="btn primary">CVSエクスポート</button>
               </div>
             </div>
           </div>
@@ -352,9 +355,41 @@
     </div>
 
     <div class="daily-vehicles-block">
-      <h3>本日使用する車両（出勤車）</h3>
+      <h3>本日使用する車両（配車可能車両）</h3>
       <div id="dailyVehicleChecklist" class="vehicle-checklist"></div>
       <div id="manualLastVehicleInfo" class="muted" style="margin-top:10px;">ラスト便車両: なし</div>
+    </div>
+
+    <div class="daily-hybrid-panel">
+      <div class="hybrid-grid">
+        <section class="hybrid-card">
+          <div class="hybrid-card-head">
+            <h3>運用基準</h3>
+            <span class="chip subtle">現実レイヤー</span>
+          </div>
+          <div id="operationContextSummary" class="hybrid-summary-grid"></div>
+          <div id="operationDiagnosis" class="hybrid-diagnosis muted">診断を計算中です…</div>
+        </section>
+
+        <section class="hybrid-card">
+          <div class="hybrid-card-head">
+            <h3>試算対象</h3>
+            <span class="chip subtle">未来レイヤー</span>
+          </div>
+          <div class="hybrid-sim-controls">
+            <div class="field compact">
+              <label for="simulationSlotSelect">試算対象便</label>
+              <select id="simulationSlotSelect"></select>
+            </div>
+            <div class="action-row">
+              <button id="runSimulationBtn" class="btn ghost">この便を試算</button>
+              <button id="runSimulationDispatchBtn" class="btn primary">この便で自動配車を試す</button>
+            </div>
+          </div>
+          <div id="simulationDiagnosis" class="hybrid-diagnosis muted">試算対象便を選択してください</div>
+          <div id="simulationPreview" class="simulation-preview muted">まだ試算していません</div>
+        </section>
+      </div>
     </div>
 
     <div class="divider"></div>
