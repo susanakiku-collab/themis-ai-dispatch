@@ -355,44 +355,60 @@
     </div>
 
     <div class="daily-vehicles-block">
-      <h3>配車可能車両</h3>
+      <h3>本日使用する車両（配車可能車両）</h3>
       <div id="dailyVehicleChecklist" class="vehicle-checklist"></div>
-      <div id="manualLastVehicleInfo" class="muted compact-note" style="margin-top:8px;">ラスト便車両: なし</div>
+      <div id="manualLastVehicleInfo" class="muted" style="margin-top:10px;">ラスト便車両: なし</div>
     </div>
 
     <div class="daily-hybrid-panel">
-      <div class="hybrid-grid">
-        <section class="hybrid-card">
-          <div class="hybrid-card-head">
-            <h3>運用基準</h3>
-            <span class="chip subtle">現実レイヤー</span>
-          </div>
-          <div id="operationContextSummary" class="hybrid-summary-grid"></div>
-          <div id="operationDiagnosis" class="hybrid-diagnosis muted compact"></div>
-        </section>
+      <div class="hybrid-grid hybrid-grid-stack">
+        <details class="hybrid-toggle-card">
+          <summary class="hybrid-toggle-summary">
+            <div class="hybrid-toggle-title-wrap">
+              <span class="hybrid-toggle-icon">📍</span>
+              <div>
+                <div class="hybrid-toggle-title">運用基準</div>
+                <div class="hybrid-toggle-sub">必要なときだけ開く</div>
+              </div>
+            </div>
+            <span class="chip subtle">現実</span>
+          </summary>
+          <section class="hybrid-card hybrid-card-inner">
+            <div id="operationContextSummary" class="hybrid-summary-grid"></div>
+            <div id="operationDiagnosis" class="hybrid-diagnosis muted">診断を計算中です…</div>
+          </section>
+        </details>
 
-        <section class="hybrid-card">
-          <div class="hybrid-card-head">
-            <h3>試算対象</h3>
-            <span class="chip subtle">未来レイヤー</span>
-          </div>
-          <div class="hybrid-sim-controls">
-            <div class="field compact">
-              <label for="simulationSlotSelect">試算対象便</label>
-              <select id="simulationSlotSelect"></select>
+        <details class="hybrid-toggle-card">
+          <summary class="hybrid-toggle-summary">
+            <div class="hybrid-toggle-title-wrap">
+              <span class="hybrid-toggle-icon">🎯</span>
+              <div>
+                <div class="hybrid-toggle-title">試算対象</div>
+                <div class="hybrid-toggle-sub">必要なときだけ開く</div>
+              </div>
             </div>
-            <label class="sim-toggle-row">
-              <input id="simulationIncludePlanInflow" type="checkbox" />
-              <span>前便未処理予定を流入させる</span>
-            </label>
-            <div class="action-row">
-              <button id="runSimulationBtn" class="btn ghost">この便を試算</button>
-              <button id="runSimulationDispatchBtn" class="btn primary">この便で自動配車を試す</button>
+            <span class="chip subtle">試算</span>
+          </summary>
+          <section class="hybrid-card hybrid-card-inner">
+            <div class="hybrid-sim-controls">
+              <div class="field compact">
+                <label for="simulationSlotSelect">対象便</label>
+                <select id="simulationSlotSelect"></select>
+              </div>
+              <label class="sim-toggle-row">
+                <input id="simulationIncludePlanInflow" type="checkbox" />
+                <span>前便未処理予定を流入</span>
+              </label>
+              <div class="action-row">
+                <button id="runSimulationBtn" class="btn ghost">試算</button>
+                <button id="runSimulationDispatchBtn" class="btn primary">自動配車を試す</button>
+              </div>
             </div>
-          </div>
-          <div id="simulationDiagnosis" class="hybrid-diagnosis muted compact"></div>
-          <div id="simulationPreview" class="simulation-preview muted">まだ試算していません</div>
-        </section>
+            <div id="simulationDiagnosis" class="hybrid-diagnosis muted">試算対象便を選択してください</div>
+            <div id="simulationPreview" class="simulation-preview muted">まだ試算していません</div>
+          </section>
+        </details>
       </div>
     </div>
 
