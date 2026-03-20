@@ -682,10 +682,10 @@ function renderOperationAndSimulationUI() {
 
     if (els.operationContextSummary) {
       els.operationContextSummary.innerHTML = buildSummaryItemsHtml([
-        { label: "運用基準便", value: getHourLabel(operationBaseHour) },
-        { label: "実際の次便", value: Number.isFinite(realNextHour) ? getHourLabel(realNextHour) : "-" },
-        { label: "ラスト便", value: Number.isFinite(lastHour) ? getHourLabel(lastHour) : "-" },
-        { label: "次便実効車両", value: nextDiag ? `${nextDiag.effectiveVehicleCount}台` : "-" }
+        { label: "今便", value: getHourLabel(operationBaseHour) },
+        { label: "次便", value: Number.isFinite(realNextHour) ? getHourLabel(realNextHour) : "-" },
+        { label: "終便", value: Number.isFinite(lastHour) ? getHourLabel(lastHour) : "-" },
+        { label: "次台", value: nextDiag ? `${nextDiag.effectiveVehicleCount}台` : "-" }
       ]);
     }
 
@@ -696,10 +696,11 @@ function renderOperationAndSimulationUI() {
       const nextDead = nextDiag?.deadVehicleNames?.length ? nextDiag.deadVehicleNames.join(" / ") : "なし";
       els.operationDiagnosis.className = `hybrid-diagnosis ${cls}`;
       els.operationDiagnosis.innerHTML = `
-        今便: ${getHourLabel(operationDiag.hour)} / ${operationDiag.castCount}名 / 実効${operationDiag.effectiveVehicleCount}台 / 総定員${operationDiag.totalCapacity} / ${operationDiag.statusText}<br>
-        次便: ${nextDiag ? `${getHourLabel(nextDiag.hour)} / ${nextDiag.castCount}名 / 実効${nextDiag.effectiveVehicleCount}台 / 総定員${nextDiag.totalCapacity} / ${nextDiag.statusText}` : '-'}<br>
-        ラスト便: ${lastDiag ? `${getHourLabel(lastDiag.hour)} / ${lastDiag.castCount}名 / 実効${lastDiag.effectiveVehicleCount}台 / 総定員${lastDiag.totalCapacity} / ${lastDiag.statusText}` : '-'}<br>
-        次便NG車両: ${escapeHtml(nextDead)}
+        <span class="diag-pill">今 ${getHourLabel(operationDiag.hour)} ${operationDiag.castCount}名</span>
+        <span class="diag-pill">次 ${nextDiag ? `${getHourLabel(nextDiag.hour)} ${nextDiag.castCount}名` : '-'}</span>
+        <span class="diag-pill">終 ${lastDiag ? `${getHourLabel(lastDiag.hour)} ${lastDiag.castCount}名` : '-'}</span>
+        <span class="diag-pill">状態 ${escapeHtml(operationDiag.statusText)}</span>
+        <span class="diag-pill wide">次便NG ${escapeHtml(nextDead)}</span>
       `;
     }
 
@@ -723,8 +724,8 @@ function renderOperationAndSimulationUI() {
     }
 
     if (!lastSimulationResult && els.simulationDiagnosis) {
-      els.simulationDiagnosis.className = 'hybrid-diagnosis muted';
-      els.simulationDiagnosis.textContent = '試算対象便を選択してください';
+      els.simulationDiagnosis.className = 'hybrid-diagnosis muted compact';
+      els.simulationDiagnosis.innerHTML = '<span class="diag-pill">対象便を選択</span>';
     }
   } catch (error) {
     console.error(error);
@@ -737,14 +738,6 @@ function renderOperationAndSimulationUI() {
   }
 }
 
-function focusSimulationPanel() {
-  const target = els.simulationDiagnosis || els.simulationPreview;
-  if (!target?.scrollIntoView) return;
-  window.requestAnimationFrame(() => {
-    target.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  });
-}
-
 function runSlotDiagnosisPreview() {
   const hour = Number(els.simulationSlotSelect?.value ?? simulationSlotHour ?? getOperationBaseHour());
   simulationSlotHour = hour;
@@ -753,9 +746,13 @@ function runSlotDiagnosisPreview() {
   if (els.simulationDiagnosis) {
     els.simulationDiagnosis.className = `hybrid-diagnosis ${diag.statusKey}`;
     els.simulationDiagnosis.innerHTML = `
-      試算対象便: ${getHourLabel(diag.hour)} / 対象${diag.castCount}名 / 実効${diag.effectiveVehicleCount}台 / 総定員${diag.totalCapacity} / 方面系統${diag.areaGroupCount}<br>
-      判定: ${diag.statusText}${diag.shortageCount > 0 ? ` / 未配車見込み ${diag.shortageCount}名` : ''}<br>
-      次便NG車両: ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}
+      <span class="diag-pill">${getHourLabel(diag.hour)}</span>
+      <span class="diag-pill">対象 ${diag.castCount}名</span>
+      <span class="diag-pill">実効 ${diag.effectiveVehicleCount}台</span>
+      <span class="diag-pill">系統 ${diag.areaGroupCount}</span>
+      <span class="diag-pill">判定 ${escapeHtml(diag.statusText)}</span>
+      ${diag.shortageCount > 0 ? `<span class="diag-pill warn">未配車 ${diag.shortageCount}名</span>` : ''}
+      <span class="diag-pill wide">次便NG ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}</span>
     `;
   }
   if (els.simulationPreview) {
@@ -775,7 +772,6 @@ function runSlotDiagnosisPreview() {
       `;
     }
   }
-  focusSimulationPanel();
 }
 
 function getAssignmentsForPreview(items, vehicles, monthlyMap) {
@@ -839,8 +835,12 @@ function runSimulationDispatchPreview() {
     const cls = unassigned.length > 0 || diag.statusKey === 'danger' ? 'danger' : (diag.statusKey === 'warn' ? 'warn' : 'ok');
     els.simulationDiagnosis.className = `hybrid-diagnosis ${cls}`;
     els.simulationDiagnosis.innerHTML = `
-      試算対象便: ${getHourLabel(hour)} / 実効${vehicles.length}台 / 総定員${diag.totalCapacity} / 判定 ${diag.statusText}<br>
-      ${unassigned.length ? `未配車見込み ${unassigned.length}名` : '未配車見込み 0名'} / 次便NG車両 ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}
+      <span class="diag-pill">${getHourLabel(hour)}</span>
+      <span class="diag-pill">実効 ${vehicles.length}台</span>
+      <span class="diag-pill">定員 ${diag.totalCapacity}</span>
+      <span class="diag-pill">判定 ${escapeHtml(diag.statusText)}</span>
+      <span class="diag-pill ${unassigned.length ? 'warn' : ''}">未配車 ${unassigned.length}名</span>
+      <span class="diag-pill wide">次便NG ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}</span>
     `;
   }
   if (els.simulationPreview) {
@@ -854,7 +854,6 @@ function runSimulationDispatchPreview() {
       <div class="sim-preview-grid">${html || '<div class="muted">配車結果なし</div>'}</div>
     `;
   }
-  focusSimulationPanel();
 }
 
 function isValidLatLng(lat, lng) {
