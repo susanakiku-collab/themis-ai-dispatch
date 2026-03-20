@@ -660,13 +660,76 @@ function diagnoseHourWindow(targetHour) {
   };
 }
 
+function getStatusPillClass(statusKey) {
+  if (statusKey === "danger") return "danger";
+  if (statusKey === "warn") return "warn";
+  return "ok";
+}
+
+function buildStatusPill(label, value, statusKey = "ok") {
+  return `<span class="status-pill ${getStatusPillClass(statusKey)}"><span class="status-pill-label">${escapeHtml(label)}</span><span class="status-pill-value">${escapeHtml(value)}</span></span>`;
+}
+
 function buildSummaryItemsHtml(items) {
   return items.map(item => `
-    <div class="hybrid-summary-item">
-      <div class="hybrid-summary-label">${escapeHtml(item.label)}</div>
-      <div class="hybrid-summary-value">${escapeHtml(item.value)}</div>
+    <div class="hybrid-summary-item ${escapeHtml(item.tone || '')}">
+      <div class="hybrid-summary-icon">${escapeHtml(item.icon || '•')}</div>
+      <div class="hybrid-summary-body">
+        <div class="hybrid-summary-label">${escapeHtml(item.label)}</div>
+        <div class="hybrid-summary-value">${escapeHtml(item.value)}</div>
+      </div>
     </div>
   `).join("");
+}
+
+function buildOperationDiagnosisHtml(operationDiag, nextDiag, lastDiag) {
+  const nextDead = nextDiag?.deadVehicleNames?.length ? nextDiag.deadVehicleNames.join(" / ") : "なし";
+  return `
+    <div class="hybrid-state-row">
+      ${buildStatusPill("今", `${getHourLabel(operationDiag.hour)} / ${operationDiag.castCount}名`, operationDiag.statusKey)}
+      ${buildStatusPill("次", nextDiag ? `${getHourLabel(nextDiag.hour)} / ${nextDiag.castCount}名` : '-', nextDiag?.statusKey || 'ok')}
+      ${buildStatusPill("終", lastDiag ? `${getHourLabel(lastDiag.hour)} / ${lastDiag.castCount}名` : '-', lastDiag?.statusKey || 'ok')}
+    </div>
+    <div class="hybrid-legend-grid">
+      <div class="hybrid-legend-card">
+        <div class="hybrid-legend-title">次便の状態</div>
+        <div class="hybrid-legend-value">${escapeHtml(nextDiag ? nextDiag.statusText : '-')}</div>
+      </div>
+      <div class="hybrid-legend-card">
+        <div class="hybrid-legend-title">次便NG車両</div>
+        <div class="hybrid-legend-value">${escapeHtml(nextDead)}</div>
+      </div>
+      <div class="hybrid-legend-card">
+        <div class="hybrid-legend-title">次便 実効/定員</div>
+        <div class="hybrid-legend-value">${nextDiag ? `${nextDiag.effectiveVehicleCount}台 / ${nextDiag.totalCapacity}` : '-'}</div>
+      </div>
+    </div>
+  `;
+}
+
+function buildSimulationDiagnosisHtml(diag) {
+  return `
+    <div class="hybrid-state-row">
+      ${buildStatusPill("便", `${getHourLabel(diag.hour)}`, diag.statusKey)}
+      ${buildStatusPill("人数", `${diag.castCount}名`, diag.statusKey)}
+      ${buildStatusPill("車両", `${diag.effectiveVehicleCount}台`, diag.statusKey)}
+      ${buildStatusPill("定員", `${diag.totalCapacity}`, diag.statusKey)}
+    </div>
+    <div class="hybrid-legend-grid">
+      <div class="hybrid-legend-card">
+        <div class="hybrid-legend-title">判定</div>
+        <div class="hybrid-legend-value">${escapeHtml(diag.statusText)}${diag.shortageCount > 0 ? ` / 未配車見込み ${diag.shortageCount}名` : ''}</div>
+      </div>
+      <div class="hybrid-legend-card">
+        <div class="hybrid-legend-title">方面系統</div>
+        <div class="hybrid-legend-value">${diag.areaGroupCount}</div>
+      </div>
+      <div class="hybrid-legend-card">
+        <div class="hybrid-legend-title">次便NG車両</div>
+        <div class="hybrid-legend-value">${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}</div>
+      </div>
+    </div>
+  `;
 }
 
 function renderOperationAndSimulationUI() {
@@ -682,26 +745,18 @@ function renderOperationAndSimulationUI() {
 
     if (els.operationContextSummary) {
       els.operationContextSummary.innerHTML = buildSummaryItemsHtml([
-        { label: "今便", value: getHourLabel(operationBaseHour) },
-        { label: "次便", value: Number.isFinite(realNextHour) ? getHourLabel(realNextHour) : "-" },
-        { label: "終便", value: Number.isFinite(lastHour) ? getHourLabel(lastHour) : "-" },
-        { label: "次台", value: nextDiag ? `${nextDiag.effectiveVehicleCount}台` : "-" }
+        { icon: "📍", label: "今の基準", value: getHourLabel(operationBaseHour), tone: "tone-blue" },
+        { icon: "⏭", label: "次に見る便", value: Number.isFinite(realNextHour) ? getHourLabel(realNextHour) : "-", tone: "tone-indigo" },
+        { icon: "🏁", label: "最終便", value: Number.isFinite(lastHour) ? getHourLabel(lastHour) : "-", tone: "tone-amber" },
+        { icon: "🚐", label: "次便の使える車両", value: nextDiag ? `${nextDiag.effectiveVehicleCount}台` : "-", tone: "tone-green" }
       ]);
     }
 
     if (els.operationDiagnosis) {
       const cls = nextDiag?.statusKey === "danger" || lastDiag?.statusKey === "danger"
         ? "danger"
-        : (nextDiag?.statusKey === "warn" || lastDiag?.statusKey === "warn" ? "warn" : "ok");
-      const nextDead = nextDiag?.deadVehicleNames?.length ? nextDiag.deadVehicleNames.join(" / ") : "なし";
-      els.operationDiagnosis.className = `hybrid-diagnosis ${cls}`;
-      els.operationDiagnosis.innerHTML = `
-        <span class="diag-pill">今 ${getHourLabel(operationDiag.hour)} ${operationDiag.castCount}名</span>
-        <span class="diag-pill">次 ${nextDiag ? `${getHourLabel(nextDiag.hour)} ${nextDiag.castCount}名` : '-'}</span>
-        <span class="diag-pill">終 ${lastDiag ? `${getHourLabel(lastDiag.hour)} ${lastDiag.castCount}名` : '-'}</span>
-        <span class="diag-pill">状態 ${escapeHtml(operationDiag.statusText)}</span>
-        <span class="diag-pill wide">次便NG ${escapeHtml(nextDead)}</span>
-      `;
+        : (nextDiag?.statusKey === "warn" || lastDiag?.statusKey === "warn" ? "warn" : "ok");      els.operationDiagnosis.className = `hybrid-diagnosis ${cls}`;
+      els.operationDiagnosis.innerHTML = buildOperationDiagnosisHtml(operationDiag, nextDiag, lastDiag);
     }
 
     const hourOptions = getUnifiedHourSet();
@@ -724,8 +779,8 @@ function renderOperationAndSimulationUI() {
     }
 
     if (!lastSimulationResult && els.simulationDiagnosis) {
-      els.simulationDiagnosis.className = 'hybrid-diagnosis muted compact';
-      els.simulationDiagnosis.innerHTML = '<span class="diag-pill">対象便を選択</span>';
+      els.simulationDiagnosis.className = 'hybrid-diagnosis muted';
+      els.simulationDiagnosis.textContent = '試算対象便を選択してください';
     }
   } catch (error) {
     console.error(error);
@@ -743,24 +798,20 @@ function runSlotDiagnosisPreview() {
   simulationSlotHour = hour;
   const diag = diagnoseSimulationHourWindow(hour, { includePlanInflow: Boolean(els.simulationIncludePlanInflow?.checked) });
   lastSimulationResult = { type: 'diagnosis', hour, diag };
-  if (els.simulationDiagnosis) {
-    els.simulationDiagnosis.className = `hybrid-diagnosis ${diag.statusKey}`;
-    els.simulationDiagnosis.innerHTML = `
-      <span class="diag-pill">${getHourLabel(diag.hour)}</span>
-      <span class="diag-pill">対象 ${diag.castCount}名</span>
-      <span class="diag-pill">実効 ${diag.effectiveVehicleCount}台</span>
-      <span class="diag-pill">系統 ${diag.areaGroupCount}</span>
-      <span class="diag-pill">判定 ${escapeHtml(diag.statusText)}</span>
-      ${diag.shortageCount > 0 ? `<span class="diag-pill warn">未配車 ${diag.shortageCount}名</span>` : ''}
-      <span class="diag-pill wide">次便NG ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}</span>
-    `;
+  if (els.simulationDiagnosis) {    els.simulationDiagnosis.className = `hybrid-diagnosis ${diag.statusKey}`;
+    els.simulationDiagnosis.innerHTML = buildSimulationDiagnosisHtml(diag);
   }
   if (els.simulationPreview) {
     if (!diag.rows.length) {
       els.simulationPreview.className = 'simulation-preview muted';
       els.simulationPreview.textContent = 'この便の予定対象はありません';
     } else {
-      const list = diag.rows.map(row => `${row?.casts?.name || '-'} / ${normalizeAreaLabel(row?.destination_area || row?.planned_area || row?.casts?.area || '-')}`).join('<br>');
+      const list = diag.rows.map(row => `
+        <div class="sim-mini-chip">
+          <span class="sim-mini-name">${escapeHtml(row?.casts?.name || '-')}</span>
+          <span class="sim-mini-area">${escapeHtml(normalizeAreaLabel(row?.destination_area || row?.planned_area || row?.casts?.area || '-'))}</span>
+        </div>
+      `).join('');
       els.simulationPreview.className = 'simulation-preview';
       els.simulationPreview.innerHTML = `
         <div class="sim-preview-head">
@@ -768,7 +819,7 @@ function runSlotDiagnosisPreview() {
           <span class="chip">${getHourLabel(diag.hour)}</span>
         </div>
         <div class="sim-preview-meta">対象便予定 ${diag.slotPlanCount}名 / 前便未処理予定 ${diag.inflowPlanCount}名</div>
-        <div>${list}</div>
+        <div class="sim-mini-chip-grid">${list}</div>
       `;
     }
   }
@@ -832,16 +883,12 @@ function runSimulationDispatchPreview() {
   const diag = diagnoseSimulationHourWindow(hour, { includePlanInflow: Boolean(els.simulationIncludePlanInflow?.checked) });
   lastSimulationResult = { type: 'dispatch', hour, diag, unassignedCount: unassigned.length };
   if (els.simulationDiagnosis) {
-    const cls = unassigned.length > 0 || diag.statusKey === 'danger' ? 'danger' : (diag.statusKey === 'warn' ? 'warn' : 'ok');
-    els.simulationDiagnosis.className = `hybrid-diagnosis ${cls}`;
-    els.simulationDiagnosis.innerHTML = `
-      <span class="diag-pill">${getHourLabel(hour)}</span>
-      <span class="diag-pill">実効 ${vehicles.length}台</span>
-      <span class="diag-pill">定員 ${diag.totalCapacity}</span>
-      <span class="diag-pill">判定 ${escapeHtml(diag.statusText)}</span>
-      <span class="diag-pill ${unassigned.length ? 'warn' : ''}">未配車 ${unassigned.length}名</span>
-      <span class="diag-pill wide">次便NG ${escapeHtml(diag.deadVehicleNames.length ? diag.deadVehicleNames.join(' / ') : 'なし')}</span>
-    `;
+    const cls = unassigned.length > 0 || diag.statusKey === 'danger' ? 'danger' : (diag.statusKey === 'warn' ? 'warn' : 'ok');    els.simulationDiagnosis.className = `hybrid-diagnosis ${cls}`;
+    els.simulationDiagnosis.innerHTML = buildSimulationDiagnosisHtml({
+      ...diag,
+      effectiveVehicleCount: vehicles.length,
+      shortageCount: unassigned.length
+    });
   }
   if (els.simulationPreview) {
     els.simulationPreview.className = 'simulation-preview';
