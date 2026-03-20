@@ -337,55 +337,71 @@
 
       <!-- 当日運用 -->
 <section id="dailyTab" class="page-panel">
-  <section class="panel-card">
-    <div class="daily-header-row">
-      <h2>当日運用</h2>
-      <div class="daily-top-actions">
-        <div class="field compact">
-          <label for="dispatchDate">日付：</label>
+  <section class="panel-card daily-panel-card">
+    <div class="daily-hero">
+      <div class="daily-hero-copy">
+        <div class="daily-hero-badge">当日運用</div>
+        <h2>スマホで見やすい運用画面</h2>
+        <p class="daily-hero-text">上から順に、日付 → 使用車両 → 運用基準 → 試算対象便 → 配車結果 の流れで操作できます。</p>
+      </div>
+      <div class="daily-top-actions daily-top-actions-card">
+        <div class="field compact daily-date-field">
+          <label for="dispatchDate">日付</label>
           <input id="dispatchDate" type="date" />
         </div>
         <button id="optimizeBtn" class="btn primary">自動配車</button>
-        <button id="confirmDailyBtn" class="btn ghost">確定（月間へ反映）</button>
+        <button id="confirmDailyBtn" class="btn ghost">確定</button>
         <button id="clearActualBtn" class="btn danger">Actual全消去</button>
-        <button id="checkAllVehiclesBtn" class="btn ghost">全選択</button>
-        <button id="uncheckAllVehiclesBtn" class="btn danger">全解除</button>
+        <button id="checkAllVehiclesBtn" class="btn ghost">車両 全選択</button>
+        <button id="uncheckAllVehiclesBtn" class="btn danger">車両 全解除</button>
         <button id="clearManualLastVehicleBtn" class="btn ghost">ラスト便車両解除</button>
       </div>
     </div>
 
-    <div class="daily-vehicles-block">
-      <h3>本日使用する車両（配車可能車両）</h3>
+    <div class="daily-vehicles-block daily-section-card">
+      <div class="daily-section-head">
+        <div>
+          <h3>本日使用する車両</h3>
+          <p class="section-help">まずここで、今日使う車両とラスト便対象を選びます。</p>
+        </div>
+        <span class="chip subtle">配車可能車両</span>
+      </div>
       <div id="dailyVehicleChecklist" class="vehicle-checklist"></div>
-      <div id="manualLastVehicleInfo" class="muted" style="margin-top:10px;">ラスト便車両: なし</div>
+      <div id="manualLastVehicleInfo" class="daily-info-note muted">ラスト便車両: なし</div>
     </div>
 
     <div class="daily-hybrid-panel">
       <div class="hybrid-grid">
-        <section class="hybrid-card">
+        <section class="hybrid-card daily-section-card">
           <div class="hybrid-card-head">
-            <h3>運用基準</h3>
+            <div>
+              <h3>運用基準</h3>
+              <p class="section-help">いま実際に走っている便を基準に、次便とラスト便の余力を見ます。</p>
+            </div>
             <span class="chip subtle">現実レイヤー</span>
           </div>
           <div id="operationContextSummary" class="hybrid-summary-grid"></div>
           <div id="operationDiagnosis" class="hybrid-diagnosis muted">診断を計算中です…</div>
         </section>
 
-        <section class="hybrid-card">
+        <section class="hybrid-card daily-section-card simulation-focus-card">
           <div class="hybrid-card-head">
-            <h3>試算対象</h3>
+            <div>
+              <h3>試算対象便</h3>
+              <p class="section-help">試したい時間帯を選び、必要なら前便未処理予定も流し込んで試算します。</p>
+            </div>
             <span class="chip subtle">未来レイヤー</span>
           </div>
           <div class="hybrid-sim-controls">
-            <div class="field compact">
-              <label for="simulationSlotSelect">試算対象便</label>
+            <div class="field compact sim-slot-field">
+              <label for="simulationSlotSelect">試算する便</label>
               <select id="simulationSlotSelect"></select>
             </div>
             <label class="sim-toggle-row">
-              <input id="simulationIncludeInflow" type="checkbox" />
-              <span>前便未完了を流入させる</span>
+              <input id="simulationIncludePlanInflow" type="checkbox" />
+              <span>前便未処理予定を流入させる</span>
             </label>
-            <div class="action-row">
+            <div class="action-row sim-action-row">
               <button id="runSimulationBtn" class="btn ghost">この便を試算</button>
               <button id="runSimulationDispatchBtn" class="btn primary">この便で自動配車を試す</button>
             </div>
@@ -395,6 +411,8 @@
         </section>
       </div>
     </div>
+
+    <div class="divider"></div>
 
     <div class="divider"></div>
 
