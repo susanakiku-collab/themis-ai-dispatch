@@ -2409,6 +2409,169 @@ function buildDispatchItemMapUrl(item) {
   );
 }
 
+function buildDispatchVehicleRouteUrl(rows) {
+  const orderedRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (!orderedRows.length) return "";
+
+  const buildPoint = row => {
+    const lat = toNullableNumber(row?.casts?.latitude ?? row?.latitude ?? row?.destination_lat);
+    const lng = toNullableNumber(row?.casts?.longitude ?? row?.longitude ?? row?.destination_lng);
+    if (isValidLatLng(lat, lng)) return `${lat},${lng}`;
+    const address = String(row?.destination_address || row?.casts?.address || "").trim();
+    return address || "";
+  };
+
+  const points = orderedRows.map(buildPoint).filter(Boolean);
+  if (!points.length) return "";
+
+  const origin = encodeURIComponent(`${ORIGIN_LAT},${ORIGIN_LNG}`);
+  const destination = encodeURIComponent(points[points.length - 1]);
+  const waypointPoints = points.slice(0, -1);
+  const waypoints = waypointPoints.length
+    ? `&waypoints=${encodeURIComponent(waypointPoints.join('|'))}`
+    : "";
+
+  return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypoints}&travelmode=driving`;
+}
+
+function getDispatchOverviewVehicleColor(index) {
+  const palette = [
+    '#2563eb', '#16a34a', '#dc2626', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#4f46e5'
+  ];
+  return palette[Math.abs(Number(index || 0)) % palette.length];
+}
+
+function buildDispatchOverviewMapHtml(cards) {
+  const usableCards = Array.isArray(cards) ? cards.filter(card => Array.isArray(card?.orderedRows) && card.orderedRows.length) : [];
+  if (!usableCards.length) return '';
+
+  const legends = usableCards.map((card, index) => {
+    const color = getDispatchOverviewVehicleColor(index);
+    const name = escapeHtml(card?.vehicle?.driver_name || card?.vehicle?.plate_number || `車両${index + 1}`);
+    const count = Number(card?.orderedRows?.length || 0);
+    return `
+      <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);font-size:12px;">
+        <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;"></span>
+        ${name} <span style="opacity:.7;">${count}件</span>
+      </span>
+    `;
+  }).join('');
+
+  return `
+    <div class="panel-card" style="margin-top:16px;">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;">
+        <div>
+          <h3 style="margin:0 0 4px;">全配車 俯瞰マップ</h3>
+          <div style="font-size:12px;color:#9aa3b2;">全車両の位置関係をピンだけで確認できます</div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">${legends}</div>
+      </div>
+      <div id="themisDispatchOverviewMap" style="height:420px;border-radius:18px;overflow:hidden;border:1px solid rgba(255,255,255,.08);"></div>
+      <div id="themisDispatchOverviewMapNote" style="margin-top:8px;font-size:12px;color:#9aa3b2;line-height:1.7;">起点は黒ピン、各車両は色分けピンです。数字は降ろし順です。</div>
+    </div>
+  `;
+}
+
+function renderDispatchOverviewMap(cards) {
+  const container = document.getElementById('themisDispatchOverviewMap');
+  const note = document.getElementById('themisDispatchOverviewMapNote');
+  if (window.__themisDispatchOverviewMap && typeof window.__themisDispatchOverviewMap.remove === 'function') {
+    try { window.__themisDispatchOverviewMap.remove(); } catch (e) { console.warn(e); }
+    window.__themisDispatchOverviewMap = null;
+  }
+  if (!container) return;
+  if (!window.L) {
+    container.innerHTML = '<div style="padding:16px;color:#9aa3b2;">地図ライブラリの読み込み待機中です</div>';
+    return;
+  }
+
+  const usableCards = Array.isArray(cards) ? cards.filter(card => Array.isArray(card?.orderedRows) && card.orderedRows.length) : [];
+  const points = [];
+  usableCards.forEach((card, vehicleIndex) => {
+    const vehicleName = card?.vehicle?.driver_name || card?.vehicle?.plate_number || `車両${vehicleIndex + 1}`;
+    const color = getDispatchOverviewVehicleColor(vehicleIndex);
+    card.orderedRows.forEach((row, rowIndex) => {
+      const lat = toNullableNumber(row?.casts?.latitude ?? row?.latitude ?? row?.destination_lat);
+      const lng = toNullableNumber(row?.casts?.longitude ?? row?.longitude ?? row?.destination_lng);
+      if (!isValidLatLng(lat, lng)) return;
+      points.push({
+        lat,
+        lng,
+        vehicleName,
+        color,
+        order: rowIndex + 1,
+        castName: row?.casts?.name || '-',
+        area: normalizeAreaLabel(row?.destination_area || row?.casts?.area || '-'),
+        distanceKm: Number(row?.distance_km || 0),
+        address: row?.destination_address || row?.casts?.address || ''
+      });
+    });
+  });
+
+  if (!points.length) {
+    container.innerHTML = '<div style="padding:16px;color:#9aa3b2;">座標付きの配車データがありません</div>';
+    if (note) note.textContent = '座標があるキャストだけ地図に表示されます。';
+    return;
+  }
+
+  container.innerHTML = '';
+  const map = window.L.map(container, { preferCanvas: true, scrollWheelZoom: true });
+  window.__themisDispatchOverviewMap = map;
+
+  window.L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  const bounds = [];
+  const originLat = toNullableNumber(ORIGIN_LAT);
+  const originLng = toNullableNumber(ORIGIN_LNG);
+  if (isValidLatLng(originLat, originLng)) {
+    const originIcon = window.L.divIcon({
+      className: 'themis-origin-pin',
+      html: '<div style="width:24px;height:24px;border-radius:999px;background:#111827;border:2px solid #fff;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,.35);">起</div>',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+    window.L.marker([originLat, originLng], { icon: originIcon })
+      .addTo(map)
+      .bindPopup(`<strong>${escapeHtml(ORIGIN_LABEL || '起点')}</strong>`);
+    bounds.push([originLat, originLng]);
+  }
+
+  points.forEach(point => {
+    const pin = window.L.divIcon({
+      className: 'themis-dispatch-pin',
+      html: `<div style="width:28px;height:28px;border-radius:999px;background:${point.color};border:2px solid #fff;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,.30);">${point.order}</div>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+      popupAnchor: [0, -12]
+    });
+
+    const popupHtml = `
+      <div style="min-width:180px;line-height:1.7;">
+        <div style="font-weight:700;margin-bottom:4px;">${escapeHtml(point.vehicleName)} / 順番 ${point.order}</div>
+        <div>${escapeHtml(point.castName)}</div>
+        <div style="font-size:12px;color:#475569;">${escapeHtml(point.area)} / ${point.distanceKm.toFixed(1)}km</div>
+        <div style="font-size:12px;color:#64748b;">${escapeHtml(point.address)}</div>
+      </div>
+    `;
+
+    window.L.marker([point.lat, point.lng], { icon: pin }).addTo(map).bindPopup(popupHtml);
+    bounds.push([point.lat, point.lng]);
+  });
+
+  if (bounds.length === 1) {
+    map.setView(bounds[0], 13);
+  } else {
+    map.fitBounds(bounds, { padding: [30, 30] });
+  }
+
+  setTimeout(() => {
+    try { map.invalidateSize(); } catch (e) { console.warn(e); }
+  }, 50);
+}
+
 function buildMapLinkHtml({ name, address, lat, lng, className = "map-name-link" }) {
   const safeName = escapeHtml(name || "-");
   const mapUrl = buildMapUrlFromAddressOrLatLng(address, lat, lng);
@@ -7943,6 +8106,7 @@ function renderDailyDispatchResult() {
                 <span class="metric-badge">累計距離 ${summary.totalKm.toFixed(1)}km</span>
                 <span class="metric-badge">累計時間 ${escapeHtml(formatMinutesAsJa(summary.driveMinutes))}</span>
                 <span class="metric-badge">累計件数 ${summary.jobCount}件</span>
+                ${orderedRows.length ? `<a class="btn ghost" href="${buildDispatchVehicleRouteUrl(orderedRows)}" target="_blank" rel="noopener noreferrer" style="margin-left:6px;">Google Mapsで開く</a>` : ""}
               </div>
             </div>
             <div class="vehicle-result-body">${body}</div>
@@ -7969,7 +8133,9 @@ function renderDailyDispatchResult() {
       })
       .join("");
 
-    els.dailyDispatchResult.innerHTML = timelineHtml + cardsHtml;
+    const overviewMapHtml = buildDispatchOverviewMapHtml(cards);
+    els.dailyDispatchResult.innerHTML = timelineHtml + cardsHtml + overviewMapHtml;
+    renderDispatchOverviewMap(cards);
     renderOperationAndSimulationUI();
 
     els.dailyDispatchResult.querySelectorAll(".dispatch-vehicle-select").forEach(select => {
@@ -10163,544 +10329,3 @@ window.renderDailyDispatchResult = function(){
   if(_origRender) _origRender();
   setTimeout(renderDispatchSummaryFromDOM, 50);
 };
-
-/* ===== THEMIS display order patch: anchor-last drop order v1 ===== */
-(function(){
-  function __themisDisplayNum(v, fallback = 0) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : fallback;
-  }
-
-  function __themisDisplayArea(row) {
-    try {
-      if (typeof getThemisV54RowArea === 'function') return getThemisV54RowArea(row);
-    } catch (_) {}
-    return normalizeAreaLabel(row?.destination_area || row?.cluster_area || row?.planned_area || row?.casts?.area || '無し');
-  }
-
-  function __themisDisplayDistance(row) {
-    try {
-      if (typeof getThemisV54RowDistance === 'function') {
-        const n = Number(getThemisV54RowDistance(row));
-        if (Number.isFinite(n) && n > 0) return n;
-      }
-    } catch (_) {}
-    const direct = Number(row?.distance_km ?? row?.casts?.distance_km ?? row?.plan_distance_km);
-    if (Number.isFinite(direct) && direct > 0) return direct;
-    const lat = Number(row?.casts?.latitude);
-    const lng = Number(row?.casts?.longitude);
-    if (typeof estimateRoadKmFromStation === 'function' && isValidLatLng(lat, lng)) {
-      return Number(estimateRoadKmFromStation(lat, lng) || 0);
-    }
-    return 0;
-  }
-
-  function __themisDisplayTravelMinutes(row) {
-    try {
-      if (typeof getThemisV54StoredTravelMinutes === 'function') {
-        const n = Number(getThemisV54StoredTravelMinutes(row));
-        if (Number.isFinite(n) && n > 0) return n;
-      }
-    } catch (_) {}
-    const direct = Number(row?.casts?.travel_minutes ?? row?.travel_minutes);
-    return Number.isFinite(direct) && direct > 0 ? direct : 0;
-  }
-
-  function __themisDisplayHour(row) {
-    return __themisDisplayNum(row?.actual_hour ?? row?.plan_hour, 0);
-  }
-
-  function __themisDisplayRowKey(row) {
-    return [
-      String(row?.id || ''),
-      String(row?.cast_id || row?.casts?.id || ''),
-      String(row?.actual_hour ?? row?.plan_hour ?? ''),
-      String(row?.destination_area || row?.casts?.area || ''),
-      String(row?.casts?.name || row?.cast_name || ''),
-      String(row?.address || row?.casts?.address || '')
-    ].join('|');
-  }
-
-  function __themisDisplayDirectionKey(row) {
-    const area = __themisDisplayArea(row);
-    try {
-      if (typeof getAreaDirectionCluster === 'function') {
-        return getAreaDirectionCluster(area) || area || '無し';
-      }
-    } catch (_) {}
-    return area || '無し';
-  }
-
-  function __themisAnchorMetric(row) {
-    return {
-      distance: __themisDisplayDistance(row),
-      travel: __themisDisplayTravelMinutes(row),
-      key: __themisDisplayRowKey(row)
-    };
-  }
-
-  function __themisCompareAnchorDesc(a, b) {
-    const am = __themisAnchorMetric(a);
-    const bm = __themisAnchorMetric(b);
-    if (am.distance !== bm.distance) return bm.distance - am.distance;
-    if (am.travel !== bm.travel) return bm.travel - am.travel;
-    return am.key.localeCompare(bm.key, 'ja');
-  }
-
-  function __themisCompareDropAsc(a, b) {
-    const am = __themisAnchorMetric(a);
-    const bm = __themisAnchorMetric(b);
-    if (am.distance !== bm.distance) return am.distance - bm.distance;
-    if (am.travel !== bm.travel) return am.travel - bm.travel;
-    const aa = __themisDisplayArea(a);
-    const ba = __themisDisplayArea(b);
-    const byArea = aa.localeCompare(ba, 'ja');
-    if (byArea !== 0) return byArea;
-    return am.key.localeCompare(bm.key, 'ja');
-  }
-
-  function __themisDisplayLatLng(row) {
-    const lat = toNullableNumber(row?.casts?.latitude ?? row?.latitude);
-    const lng = toNullableNumber(row?.casts?.longitude ?? row?.longitude);
-    if (typeof isValidLatLng === 'function' && isValidLatLng(lat, lng)) {
-      return { lat, lng };
-    }
-    return null;
-  }
-
-  function __themisEstimateLegKm(fromPoint, row) {
-    const toPoint = __themisDisplayLatLng(row);
-    if (fromPoint && toPoint && typeof estimateRoadKmBetweenPoints === 'function') {
-      const km = Number(estimateRoadKmBetweenPoints(fromPoint.lat, fromPoint.lng, toPoint.lat, toPoint.lng));
-      if (Number.isFinite(km) && km >= 0) return km;
-    }
-    return __themisDisplayDistance(row);
-  }
-
-  function __themisCompareNearestChainFromPoint(fromPoint, a, b) {
-    const aLeg = __themisEstimateLegKm(fromPoint, a);
-    const bLeg = __themisEstimateLegKm(fromPoint, b);
-    if (aLeg !== bLeg) return aLeg - bLeg;
-    return __themisCompareDropAsc(a, b);
-  }
-
-  function __themisSortAnchorBucket(rows) {
-    const safeRows = [...(rows || [])].filter(Boolean);
-    if (safeRows.length <= 1) return safeRows;
-
-    const remaining = [...safeRows];
-    const ordered = [];
-    let currentPoint = { lat: ORIGIN_LAT, lng: ORIGIN_LNG };
-
-    while (remaining.length) {
-      remaining.sort((a, b) => __themisCompareNearestChainFromPoint(currentPoint, a, b));
-      const picked = remaining.shift();
-      ordered.push(picked);
-      const pickedPoint = __themisDisplayLatLng(picked);
-      if (pickedPoint) currentPoint = pickedPoint;
-    }
-
-    return ordered;
-  }
-
-  function __themisBuildDisplayOrderedRows(rows) {
-    const safeRows = [...(rows || [])].filter(Boolean);
-    const hourMap = new Map();
-
-    safeRows.forEach(row => {
-      const hourKey = String(__themisDisplayHour(row));
-      if (!hourMap.has(hourKey)) hourMap.set(hourKey, []);
-      hourMap.get(hourKey).push(row);
-    });
-
-    const ordered = [];
-    [...hourMap.entries()]
-      .sort((a, b) => Number(a[0]) - Number(b[0]))
-      .forEach(([, hourRows]) => {
-        const dirMap = new Map();
-        hourRows.forEach(row => {
-          const dirKey = __themisDisplayDirectionKey(row);
-          if (!dirMap.has(dirKey)) dirMap.set(dirKey, []);
-          dirMap.get(dirKey).push(row);
-        });
-
-        const dirBuckets = [...dirMap.entries()].sort((a, b) => {
-          const aAnchor = [...(a[1] || [])].sort(__themisCompareAnchorDesc)[0];
-          const bAnchor = [...(b[1] || [])].sort(__themisCompareAnchorDesc)[0];
-          const metricDiff = __themisCompareAnchorDesc(aAnchor, bAnchor);
-          if (metricDiff !== 0) return metricDiff;
-          return String(a[0]).localeCompare(String(b[0]), 'ja');
-        });
-
-        dirBuckets.forEach(([, bucketRows]) => {
-          ordered.push(...__themisSortAnchorBucket(bucketRows));
-        });
-      });
-
-    if (typeof moveManualLastItemsToEnd === 'function') {
-      return moveManualLastItemsToEnd(ordered);
-    }
-    return ordered;
-  }
-
-  window.getDisplayOrderedRowsByAnchor = __themisBuildDisplayOrderedRows;
-
-  buildDailyDispatchVehicleCards = function(vehicles, activeItems, monthlyMap) {
-    return (Array.isArray(vehicles) ? vehicles : []).map(vehicle => {
-      const rows = (Array.isArray(activeItems) ? activeItems : [])
-        .filter(item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0))
-        .sort((a, b) => {
-          const ah = __themisDisplayHour(a);
-          const bh = __themisDisplayHour(b);
-          if (ah !== bh) return ah - bh;
-          return __themisCompareDropAsc(a, b);
-        });
-
-      const orderedRows = __themisBuildDisplayOrderedRows(rows);
-      return { vehicle, rows, orderedRows };
-    });
-  };
-
-  const _THEMIS_ANCHOR_DISPLAY_buildRotationTimelineHtmlSafe = typeof buildRotationTimelineHtmlSafe === 'function' ? buildRotationTimelineHtmlSafe : null;
-  buildRotationTimelineHtmlSafe = function(vehicles, activeItems) {
-    try {
-      const timeline = (Array.isArray(vehicles) ? vehicles : [])
-        .map(vehicle => {
-          const rows = (Array.isArray(activeItems) ? activeItems : []).filter(
-            item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0)
-          );
-          if (!rows.length) return null;
-
-          const orderedRows = __themisBuildDisplayOrderedRows(rows);
-          const forecast = getVehicleRotationForecastSafe(vehicle, orderedRows);
-          const summary = getVehicleDailySummary(vehicle, orderedRows);
-
-          return {
-            name: vehicle?.driver_name || vehicle?.plate_number || '-',
-            lineId: vehicle?.line_id || '',
-            returnAfterLabel: forecast?.returnAfterLabel || `${Number(forecast?.predictedReturnMinutes || 0)}分後`,
-            nextRunTime: forecast?.predictedReadyTime || '-',
-            totalKm: summary.totalKm,
-            totalJobs: summary.jobCount
-          };
-        })
-        .filter(Boolean);
-
-      if (!timeline.length) return '';
-
-      return `
-        <div class="panel-card" style="margin-bottom:16px;">
-          <h3 style="margin-bottom:10px;">車両稼働タイムライン</h3>
-          <div style="display:flex; flex-wrap:wrap; gap:8px;">
-            ${timeline.map(item => `
-              <div class="chip" style="min-width:180px;">
-                <div><strong>${escapeHtml(item.name)}</strong> ${item.lineId ? `<span class="muted">(${escapeHtml(item.lineId)})</span>` : ''}</div>
-                <div class="muted">戻り: ${escapeHtml(item.returnAfterLabel)} / 次便可能: ${escapeHtml(item.nextRunTime)}</div>
-                <div class="muted">本日 ${Number(item.totalKm || 0).toFixed(1)}km / ${Number(item.totalJobs || 0)}件</div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
-    } catch (e) {
-      console.error('buildRotationTimelineHtmlSafe anchor display patch error:', e);
-      return _THEMIS_ANCHOR_DISPLAY_buildRotationTimelineHtmlSafe
-        ? _THEMIS_ANCHOR_DISPLAY_buildRotationTimelineHtmlSafe.apply(this, arguments)
-        : '';
-    }
-  };
-
-  if (typeof getEffectiveVehiclesForHour === 'function') {
-    getEffectiveVehiclesForHour = function(targetHour) {
-      const slotMinutes = Number(targetHour) * 60;
-      const vehicles = Array.isArray(getSelectedVehiclesForToday()) ? getSelectedVehiclesForToday().filter(Boolean) : [];
-      const activeItems = (Array.isArray(currentActualsCache) ? currentActualsCache : []).filter(row => {
-        const status = normalizeStatus(row?.status);
-        return status !== 'done' && status !== 'cancel';
-      });
-
-      return vehicles.filter(vehicle => {
-        const rows = activeItems.filter(item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0));
-        if (!rows.length) return true;
-        const orderedRows = __themisBuildDisplayOrderedRows(rows);
-        const forecast = getVehicleRotationForecastSafe(vehicle, orderedRows);
-        const readyMinutes = parseClockTextToMinutes(forecast?.predictedReadyTime);
-        if (readyMinutes === null) return true;
-        return readyMinutes <= slotMinutes;
-      });
-    };
-  }
-
-  if (typeof getVehicleDeadNamesForHour === 'function') {
-    getVehicleDeadNamesForHour = function(targetHour) {
-      const slotMinutes = Number(targetHour) * 60;
-      const vehicles = Array.isArray(getSelectedVehiclesForToday()) ? getSelectedVehiclesForToday().filter(Boolean) : [];
-      const activeItems = (Array.isArray(currentActualsCache) ? currentActualsCache : []).filter(row => {
-        const status = normalizeStatus(row?.status);
-        return status !== 'done' && status !== 'cancel';
-      });
-
-      return vehicles.filter(vehicle => {
-        const rows = activeItems.filter(item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0));
-        if (!rows.length) return false;
-        const orderedRows = __themisBuildDisplayOrderedRows(rows);
-        const forecast = getVehicleRotationForecastSafe(vehicle, orderedRows);
-        const readyMinutes = parseClockTextToMinutes(forecast?.predictedReadyTime);
-        return readyMinutes !== null && readyMinutes > slotMinutes;
-      }).map(vehicle => vehicle?.driver_name || vehicle?.plate_number || `車両${vehicle.id}`);
-    };
-  }
-})();
-
-
-/* ===== THEMIS nearest-chain display hotfix start ===== */
-(function(){
-  function __themisNormalizeNum(v){
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  function __themisRowPoint(row){
-    try{
-      if (typeof getThemisV54RowPoint === 'function') {
-        const p = getThemisV54RowPoint(row);
-        if (p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng))) {
-          return { lat:Number(p.lat), lng:Number(p.lng) };
-        }
-      }
-    }catch(e){}
-    try{
-      if (typeof getItemLatLng === 'function') {
-        const p = getItemLatLng(row);
-        if (p && Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng))) {
-          return { lat:Number(p.lat), lng:Number(p.lng) };
-        }
-      }
-    }catch(e){}
-    return null;
-  }
-
-  function __themisOriginDistanceKm(row){
-    const direct = __themisNormalizeNum(row?.distance_km ?? row?.casts?.distance_km);
-    if (direct != null && direct >= 0) return direct;
-    const stored = __themisNormalizeNum(row?.travel_minutes ?? row?.casts?.travel_minutes);
-    if (stored != null && stored > 0) return stored / 2.0;
-    return 999999;
-  }
-
-  function __themisSegmentDistanceKm(fromState, row){
-    const point = __themisRowPoint(row);
-    if (fromState?.point && point && typeof estimateRoadKmBetweenPoints === 'function') {
-      const km = Number(estimateRoadKmBetweenPoints(fromState.point.lat, fromState.point.lng, point.lat, point.lng) || 0);
-      if (Number.isFinite(km) && km >= 0) return km;
-    }
-    const currentOriginKm = __themisOriginDistanceKm(row);
-    if (fromState && Number.isFinite(Number(fromState.originDistanceKm))) {
-      return Math.abs(currentOriginKm - Number(fromState.originDistanceKm));
-    }
-    return currentOriginKm;
-  }
-
-  function __themisDirectionPenalty(fromRow, toRow){
-    try{
-      const a = typeof getThemisV54RowArea === 'function'
-        ? getThemisV54RowArea(fromRow)
-        : (fromRow?.destination_area || fromRow?.planned_area || fromRow?.cluster_area || fromRow?.casts?.area || '');
-      const b = typeof getThemisV54RowArea === 'function'
-        ? getThemisV54RowArea(toRow)
-        : (toRow?.destination_area || toRow?.planned_area || toRow?.cluster_area || toRow?.casts?.area || '');
-      if (!a || !b) return 0;
-      if (typeof isHardReverseMixForRoute === 'function' && isHardReverseMixForRoute(a, b)) return 1000;
-      if (typeof getDirectionAffinityScore === 'function') {
-        const affinity = Number(getDirectionAffinityScore(a, b) || 0);
-        if (affinity <= -45) return 180;
-        if (affinity <= -20) return 60;
-      }
-      return 0;
-    }catch(e){
-      return 0;
-    }
-  }
-
-  sortItemsByNearestRoute = function(items) {
-    const remaining = [...(items || [])].filter(Boolean);
-    const ordered = [];
-    let current = {
-      point: { lat: Number(ORIGIN_LAT), lng: Number(ORIGIN_LNG) },
-      originDistanceKm: 0,
-      row: null
-    };
-
-    while (remaining.length) {
-      let bestIndex = 0;
-      let bestMetric = Infinity;
-      let bestTie1 = Infinity;
-      let bestTie2 = Infinity;
-      let bestTie3 = Infinity;
-
-      remaining.forEach((row, index) => {
-        const legKm = __themisSegmentDistanceKm(current, row);
-        const directionPenalty = current.row ? __themisDirectionPenalty(current.row, row) : 0;
-        const metric = legKm + directionPenalty;
-        const tie1 = __themisOriginDistanceKm(row);
-        const tie2 = __themisNormalizeNum(row?.travel_minutes ?? row?.casts?.travel_minutes) ?? 999999;
-        const tie3 = Number(row?.id || row?.cast_id || row?.plan_id || index || 0);
-
-        const better = (
-          metric < bestMetric - 1e-9 ||
-          (Math.abs(metric - bestMetric) <= 1e-9 && tie1 < bestTie1 - 1e-9) ||
-          (Math.abs(metric - bestMetric) <= 1e-9 && Math.abs(tie1 - bestTie1) <= 1e-9 && tie2 < bestTie2 - 1e-9) ||
-          (Math.abs(metric - bestMetric) <= 1e-9 && Math.abs(tie1 - bestTie1) <= 1e-9 && Math.abs(tie2 - bestTie2) <= 1e-9 && tie3 < bestTie3)
-        );
-
-        if (better) {
-          bestIndex = index;
-          bestMetric = metric;
-          bestTie1 = tie1;
-          bestTie2 = tie2;
-          bestTie3 = tie3;
-        }
-      });
-
-      const picked = remaining.splice(bestIndex, 1)[0];
-      ordered.push(picked);
-      current = {
-        point: __themisRowPoint(picked),
-        originDistanceKm: __themisOriginDistanceKm(picked),
-        row: picked
-      };
-    }
-
-    return ordered;
-  };
-})();
-/* ===== THEMIS nearest-chain display hotfix end ===== */
-
-
-/* ===== THEMIS display order fixed start ===== */
-(function(){
-  function __themisDisplayHourFixed(row){
-    const h = Number(row?.actual_hour ?? row?.hour ?? row?.dispatch_hour ?? row?.slot_hour ?? 0);
-    return Number.isFinite(h) ? h : 0;
-  }
-
-  function __themisDisplayGroupByHourNearestChain(rows){
-    const safeRows = [...(rows || [])].filter(Boolean);
-    const hourMap = new Map();
-    safeRows.forEach(row => {
-      const key = String(__themisDisplayHourFixed(row));
-      if (!hourMap.has(key)) hourMap.set(key, []);
-      hourMap.get(key).push(row);
-    });
-
-    const ordered = [];
-    [...hourMap.entries()]
-      .sort((a, b) => Number(a[0]) - Number(b[0]))
-      .forEach(([, hourRows]) => {
-        ordered.push(...sortItemsByNearestRoute(hourRows));
-      });
-
-    if (typeof moveManualLastItemsToEnd === 'function') {
-      return moveManualLastItemsToEnd(ordered);
-    }
-    return ordered;
-  }
-
-  window.getDisplayOrderedRowsFixed = __themisDisplayGroupByHourNearestChain;
-
-  buildDailyDispatchVehicleCards = function(vehicles, activeItems, monthlyMap) {
-    return (Array.isArray(vehicles) ? vehicles : []).map(vehicle => {
-      const rows = (Array.isArray(activeItems) ? activeItems : [])
-        .filter(item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0));
-      const orderedRows = __themisDisplayGroupByHourNearestChain(rows);
-      return { vehicle, rows, orderedRows };
-    });
-  };
-
-  const __THEMIS_DISPLAY_FIXED_prevTimeline = typeof buildRotationTimelineHtmlSafe === 'function' ? buildRotationTimelineHtmlSafe : null;
-  buildRotationTimelineHtmlSafe = function(vehicles, activeItems) {
-    try {
-      const timeline = (Array.isArray(vehicles) ? vehicles : [])
-        .map(vehicle => {
-          const rows = (Array.isArray(activeItems) ? activeItems : []).filter(
-            item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0)
-          );
-          if (!rows.length) return null;
-          const orderedRows = __themisDisplayGroupByHourNearestChain(rows);
-          const forecast = getVehicleRotationForecastSafe(vehicle, orderedRows);
-          const summary = getVehicleDailySummary(vehicle, orderedRows);
-          return {
-            name: vehicle?.driver_name || vehicle?.plate_number || '-',
-            lineId: vehicle?.line_id || '',
-            returnAfterLabel: forecast?.returnAfterLabel || `${Number(forecast?.predictedReturnMinutes || 0)}分後`,
-            nextRunTime: forecast?.predictedReadyTime || '-',
-            totalKm: summary.totalKm,
-            totalJobs: summary.jobCount
-          };
-        })
-        .filter(Boolean);
-
-      if (!timeline.length) return '';
-
-      return `
-        <div class="panel-card" style="margin-bottom:16px;">
-          <h3 style="margin-bottom:10px;">車両稼働タイムライン</h3>
-          <div style="display:flex; flex-wrap:wrap; gap:8px;">
-            ${timeline.map(item => `
-              <div class="chip" style="min-width:180px;">
-                <div><strong>${escapeHtml(item.name)}</strong> ${item.lineId ? `<span class="muted">(${escapeHtml(item.lineId)})</span>` : ''}</div>
-                <div class="muted">戻り: ${escapeHtml(item.returnAfterLabel)} / 次便可能: ${escapeHtml(item.nextRunTime)}</div>
-                <div class="muted">本日 ${Number(item.totalKm || 0).toFixed(1)}km / ${Number(item.totalJobs || 0)}件</div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `;
-    } catch (e) {
-      console.error('buildRotationTimelineHtmlSafe display fixed patch error:', e);
-      return __THEMIS_DISPLAY_FIXED_prevTimeline ? __THEMIS_DISPLAY_FIXED_prevTimeline.apply(this, arguments) : '';
-    }
-  };
-
-  if (typeof getEffectiveVehiclesForHour === 'function') {
-    getEffectiveVehiclesForHour = function(targetHour) {
-      const slotMinutes = Number(targetHour) * 60;
-      const vehicles = Array.isArray(getSelectedVehiclesForToday()) ? getSelectedVehiclesForToday().filter(Boolean) : [];
-      const activeItems = (Array.isArray(currentActualsCache) ? currentActualsCache : []).filter(row => {
-        const status = normalizeStatus(row?.status);
-        return status !== 'done' && status !== 'cancel';
-      });
-
-      return vehicles.filter(vehicle => {
-        const rows = activeItems.filter(item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0));
-        if (!rows.length) return true;
-        const orderedRows = __themisDisplayGroupByHourNearestChain(rows);
-        const forecast = getVehicleRotationForecastSafe(vehicle, orderedRows);
-        const readyMinutes = parseClockTextToMinutes(forecast?.predictedReadyTime);
-        if (readyMinutes === null) return true;
-        return readyMinutes <= slotMinutes;
-      });
-    };
-  }
-
-  if (typeof getVehicleDeadNamesForHour === 'function') {
-    getVehicleDeadNamesForHour = function(targetHour) {
-      const slotMinutes = Number(targetHour) * 60;
-      const vehicles = Array.isArray(getSelectedVehiclesForToday()) ? getSelectedVehiclesForToday().filter(Boolean) : [];
-      const activeItems = (Array.isArray(currentActualsCache) ? currentActualsCache : []).filter(row => {
-        const status = normalizeStatus(row?.status);
-        return status !== 'done' && status !== 'cancel';
-      });
-
-      return vehicles.filter(vehicle => {
-        const rows = activeItems.filter(item => Number(item?.vehicle_id || 0) === Number(vehicle?.id || 0));
-        if (!rows.length) return false;
-        const orderedRows = __themisDisplayGroupByHourNearestChain(rows);
-        const forecast = getVehicleRotationForecastSafe(vehicle, orderedRows);
-        const readyMinutes = parseClockTextToMinutes(forecast?.predictedReadyTime);
-        return readyMinutes !== null && readyMinutes > slotMinutes;
-      }).map(vehicle => vehicle?.driver_name || vehicle?.plate_number || `車両${vehicle.id}`);
-    };
-  }
-})();
-/* ===== THEMIS display order fixed end ===== */
