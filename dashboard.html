@@ -64,12 +64,12 @@
           <section class="panel-card">
             <h2>システム概要</h2>
             <ul class="memo-list">
-              <li>・</li>
-              <li>・</li>
-              <li>・</li>
-              <li>・</li>
-              <li>・</li>
-              <li>・</li>
+              <li>キャスト・車両マスタを事前登録</li>
+              <li>予定表で送迎計画を作成</li>
+              <li>当日運用で自動配車・手動調整</li>
+              <li>実際の送りで実績管理</li>
+              <li>月間走行距離・出勤日数を集計</li>
+              <li>LINE連携でドライバーへ通知</li>
               <li>GoogleMapでルート確認可能</li>
             </ul>
           </section>
@@ -80,7 +80,7 @@
               <li>住所入力 → Enterで座標取得</li>
               <li>同一住所はジオコードキャッシュ</li>
               <li>距離はTHEMIS起点で自動計算</li>
-              <li>・</li>
+              <li>シミュレーションで便別試算可能</li>
               <li>完了キャストは次回配車から除外</li>
               <li>配車後の車両変更可能</li>
               <li>CSV出力対応</li>
@@ -317,17 +317,17 @@
           <div class="form-grid three-col">
             <div class="field">
               <label for="mileageReportStartDate">開始日</label>
-              <input id="mileageReportStartDate" type="date" />
+              <input id="mileageReportStartDate" type="date" autocomplete="off" />
             </div>
             <div class="field">
               <label for="mileageReportEndDate">終了日</label>
-              <input id="mileageReportEndDate" type="date" />
+              <input id="mileageReportEndDate" type="date" autocomplete="off" />
             </div>
             <div class="field">
               <label>&nbsp;</label>
               <div class="action-row">
                 <button id="previewMileageReportBtn" class="btn ghost">一覧表示</button>
-                <button id="exportMileageReportBtn" class="btn primary">CVSエクスポート</button>
+                <button id="exportMileageReportBtn" class="btn primary">CSVエクスポート</button>
               </div>
             </div>
           </div>
@@ -659,6 +659,27 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="config.js"></script>
-  <script src="dashboard.js?v=v3-2-ui-tidy-v1-map"></script>
+  <script src="format.js"></script>
+  <script src="time.js"></script>
+  <script src="utils.js"></script>
+  <script src="storage.js"></script>
+  <script src="geo.js"></script>
+  <script src="grouping.js"></script>
+  <script src="renderSchedule.js"></script>
+  <script src="renderActual.js"></script>
+  <script src="copyLine.js"></script>
+  <script src="supabaseService.js"></script>
+  <script src="authService.js"></script>
+  <script src="simulation.js"></script>
+  <script src="lastTrip.js"></script>
+  <script src="dispatchCore.js"></script>
+  <script src="dashboard.js"></script>
+  <script src="dispatch_v1.js"></script>
+  <script src="dispatch_v1_1.js"></script>
+
+
+
+
+
 </body>
 </html>
