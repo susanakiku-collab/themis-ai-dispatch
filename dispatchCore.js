@@ -1,15 +1,28 @@
-window.DispatchCore = (function () {
-  const ANGLE_THRESHOLD = 70;
-  const EPS = 1e-9;
+(function (global) {
+  'use strict';
+
+  const VERSION = 'dispatchcore-2026-04-06-final-lasttrip-complete';
+  const AREA_MEMBER_ANGLE_THRESHOLD = 30;
+  const DISPATCH_DEBUG = Boolean(global.DISPATCH_DEBUG);
+
+  function debugLog(...args) {
+    if (!DISPATCH_DEBUG) return;
+    console.log(...args);
+  }
+
+  function debugWarn(...args) {
+    if (!DISPATCH_DEBUG) return;
+    console.warn(...args);
+  }
 
   function toNumber(value, fallback = 0) {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : fallback;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
   }
 
   function normalizeAngle(angle) {
-    const n = toNumber(angle, 0) % 360;
-    return n < 0 ? n + 360 : n;
+    const normalized = angle % 360;
+    return normalized < 0 ? normalized + 360 : normalized;
   }
 
   function angleDiff(a, b) {
@@ -17,433 +30,573 @@ window.DispatchCore = (function () {
     return diff > 180 ? 360 - diff : diff;
   }
 
-  function getOrigin() {
-    const lat = toNumber(globalThis.ORIGIN_LAT ?? globalThis.window?.APP_CONFIG?.ORIGIN_LAT, NaN);
-    const lng = toNumber(globalThis.ORIGIN_LNG ?? globalThis.window?.APP_CONFIG?.ORIGIN_LNG, NaN);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    return { lat, lng };
-  }
-
-  function distanceKm(a, b) {
+  function haversineKm(a, b) {
     const lat1 = toNumber(a?.lat, NaN);
     const lng1 = toNumber(a?.lng, NaN);
     const lat2 = toNumber(b?.lat, NaN);
     const lng2 = toNumber(b?.lng, NaN);
-    if (![lat1, lng1, lat2, lng2].every(Number.isFinite)) return 0;
+    if (![lat1, lng1, lat2, lng2].every(Number.isFinite)) return Infinity;
 
-    const toRad = deg => (deg * Math.PI) / 180;
     const R = 6371;
-    const dLat = toRad(lat2 - lat1);
-    const dLng = toRad(lng2 - lng1);
-    const p1 = toRad(lat1);
-    const p2 = toRad(lat2);
-    const x = Math.sin(dLat / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLng / 2) ** 2;
-    const y = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-    return R * y;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const rad1 = lat1 * Math.PI / 180;
+    const rad2 = lat2 * Math.PI / 180;
+    const sinLat = Math.sin(dLat / 2);
+    const sinLng = Math.sin(dLng / 2);
+    const h = sinLat * sinLat + Math.cos(rad1) * Math.cos(rad2) * sinLng * sinLng;
+    return 2 * R * Math.asin(Math.sqrt(h));
   }
 
   function calcAngleFromOrigin(origin, point) {
-    const dx = toNumber(point?.lng, 0) - toNumber(origin?.lng, 0);
-    const dy = toNumber(point?.lat, 0) - toNumber(origin?.lat, 0);
-    return normalizeAngle((Math.atan2(dy, dx) * 180) / Math.PI);
+    const dx = point.lng - origin.lng;
+    const dy = point.lat - origin.lat;
+    return normalizeAngle(Math.atan2(dy, dx) * 180 / Math.PI);
   }
 
-  function normalizeAreaLabel(value) {
-    if (typeof globalThis.normalizeAreaLabel === 'function') {
-      return globalThis.normalizeAreaLabel(value || '');
-    }
-    return String(value || '').trim();
+  function getOrigin() {
+    const cfg = global.APP_CONFIG || {};
+    const lat = toNumber(cfg.ORIGIN_LAT, NaN);
+    const lng = toNumber(cfg.ORIGIN_LNG, NaN);
+    return { lat, lng, name: cfg.ORIGIN_LABEL || '起点' };
   }
 
-  function normalizeVehicle(vehicle) {
-    return {
-      id: toNumber(vehicle?.id, 0),
-      driver_name: String(vehicle?.driver_name || vehicle?.name || vehicle?.vehicleName || vehicle?.plate_number || ''),
-      seat_capacity: Math.max(1, toNumber(vehicle?.seat_capacity ?? vehicle?.capacity, 4)),
-      raw: vehicle
-    };
-  }
-
-  function normalizePerson(item, origin) {
+  function getItemPoint(item) {
     const lat = toNumber(item?.casts?.latitude ?? item?.latitude ?? item?.lat, NaN);
     const lng = toNumber(item?.casts?.longitude ?? item?.longitude ?? item?.lng, NaN);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  }
 
-    const point = { lat, lng };
-    const angleFromOrigin = calcAngleFromOrigin(origin, point);
-    const distanceFromOrigin = distanceKm(origin, point);
-    const dispatchDistance = toNumber(item?.distance_km ?? item?.casts?.distance_km, 0);
+  function getItemDistanceKm(item, origin, point) {
+    const stored = toNumber(item?.distance_km ?? item?.casts?.distance_km, NaN);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    if (!point) return Infinity;
+    return haversineKm(origin, point);
+  }
 
+  function normalizeItem(item, origin) {
+    const point = getItemPoint(item);
+    const distanceKm = getItemDistanceKm(item, origin, point);
+    const angleFromOrigin = point ? calcAngleFromOrigin(origin, point) : null;
     return {
-      id: toNumber(item?.id, 0),
-      cast_id: toNumber(item?.cast_id, 0),
-      name: String(item?.casts?.name || item?.name || ''),
-      actual_hour: toNumber(item?.actual_hour ?? item?.plan_hour, 0),
-      lat,
-      lng,
+      itemId: Number(item?.id || 0),
+      castId: Number(item?.cast_id || 0),
+      actualHour: Number(item?.actual_hour ?? item?.plan_hour ?? 0),
+      name: String(item?.casts?.name || item?.name || `item_${item?.id || ''}` || '').trim() || '-',
+      area: String(item?.destination_area || item?.planned_area || item?.casts?.area || '').trim(),
+      distanceKm,
       angleFromOrigin,
-      distanceFromOrigin,
-      distance_km: dispatchDistance,
-      priorityDistance: dispatchDistance > 0 ? dispatchDistance : distanceFromOrigin,
-      destination_area: normalizeAreaLabel(item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || ''),
+      point,
       raw: item
     };
   }
 
-  function sortByAnchorPriorityDesc(people) {
-    return [...people].sort((a, b) => {
-      if (Math.abs((b.priorityDistance || 0) - (a.priorityDistance || 0)) > EPS) {
-        return (b.priorityDistance || 0) - (a.priorityDistance || 0);
-      }
-      if (Math.abs((b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0)) > EPS) {
-        return (b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0);
-      }
-      return String(a.id || '').localeCompare(String(b.id || ''), 'ja');
-    });
+  function normalizeVehicle(vehicle, monthlyMap) {
+    const vehicleId = Number(vehicle?.id || 0);
+    const monthly = monthlyMap?.get(vehicleId) || {};
+    const avgDistance = toNumber(monthly?.avgDistance ?? monthly?.avg_distance ?? monthly?.averageDistance, 0);
+    const totalDistance = toNumber(monthly?.totalDistance ?? monthly?.total_distance, 0);
+    const workedDays = Math.max(0, Math.trunc(toNumber(monthly?.workedDays ?? monthly?.worked_days, 0)));
+    const homeLat = toNumber(vehicle?.home_lat, NaN);
+    const homeLng = toNumber(vehicle?.home_lng, NaN);
+    const isLastTrip = typeof global.isDriverLastTripChecked === 'function'
+      ? Boolean(global.isDriverLastTripChecked(vehicleId))
+      : Boolean(vehicle?.is_last_trip || vehicle?.isLastTrip);
+    return {
+      vehicleId,
+      driverName: String(vehicle?.driver_name || vehicle?.name || vehicle?.plate_number || '').trim() || '-',
+      capacity: Math.max(0, Math.trunc(toNumber(vehicle?.seat_capacity ?? vehicle?.capacity, 0))),
+      avgDistance,
+      totalDistance,
+      workedDays,
+      todayDistance: 0,
+      score: avgDistance,
+      homeArea: String(vehicle?.home_area || '').trim(),
+      homePoint: Number.isFinite(homeLat) && Number.isFinite(homeLng) ? { lat: homeLat, lng: homeLng } : null,
+      isLastTrip,
+      raw: vehicle
+    };
   }
 
-  function sortByOriginDistanceAsc(people) {
-    return [...people].sort((a, b) => {
-      if (Math.abs((a.distanceFromOrigin || 0) - (b.distanceFromOrigin || 0)) > EPS) {
-        return (a.distanceFromOrigin || 0) - (b.distanceFromOrigin || 0);
-      }
-      if (Math.abs((a.priorityDistance || 0) - (b.priorityDistance || 0)) > EPS) {
-        return (a.priorityDistance || 0) - (b.priorityDistance || 0);
-      }
-      return String(a.id || '').localeCompare(String(b.id || ''), 'ja');
-    });
+  function byDistanceDesc(a, b) {
+    if (b.distanceKm !== a.distanceKm) return b.distanceKm - a.distanceKm;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'ja');
   }
 
-  function minAngleDiffToAnchors(person, anchors) {
-    if (!Array.isArray(anchors) || !anchors.length) return 999;
-    return anchors.reduce((min, anchor) => {
-      return Math.min(min, angleDiff(person.angleFromOrigin, anchor.angleFromOrigin));
-    }, 999);
+  function byDistanceAsc(a, b) {
+    if (a.distanceKm !== b.distanceKm) return a.distanceKm - b.distanceKm;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'ja');
   }
 
-  function selectAnchors(people, vehicleCount) {
-    const maxCount = Math.max(0, toNumber(vehicleCount, 0));
-    if (!Array.isArray(people) || !people.length || maxCount <= 0) return [];
+  function buildAxis(anchor, index, vehicle) {
+    return {
+      axisId: `axis_${index + 1}`,
+      vehicleId: vehicle.vehicleId,
+      driverName: vehicle.driverName,
+      capacity: vehicle.capacity,
+      anchorItemId: anchor.itemId,
+      anchorName: anchor.name,
+      anchorAngle: anchor.angleFromOrigin,
+      anchorDistanceKm: anchor.distanceKm,
+      members: [anchor],
+      pending: [],
+      overflowed: []
+    };
+  }
 
-    const sorted = sortByAnchorPriorityDesc(people);
-    const anchors = [];
-    const usedIds = new Set();
-
-    const first = sorted[0];
-    if (first) {
-      anchors.push(first);
-      usedIds.add(String(first.id));
-    }
-
-    while (anchors.length < maxCount) {
-      const remaining = sorted.filter(person => !usedIds.has(String(person.id)));
-      if (!remaining.length) break;
-
-      const outside = remaining.filter(person => {
-        return anchors.every(anchor => angleDiff(person.angleFromOrigin, anchor.angleFromOrigin) >= ANGLE_THRESHOLD);
+  function getPrimaryCandidateAxes(item, axes, threshold) {
+    return axes
+      .map(axis => ({ axis, diff: angleDiff(item.angleFromOrigin, axis.anchorAngle) }))
+      .filter(entry => Number.isFinite(entry.diff) && entry.diff <= threshold)
+      .sort((a, b) => {
+        if (a.diff !== b.diff) return a.diff - b.diff;
+        if (b.axis.anchorDistanceKm !== a.axis.anchorDistanceKm) return b.axis.anchorDistanceKm - a.axis.anchorDistanceKm;
+        return String(a.axis.axisId).localeCompare(String(b.axis.axisId), 'ja');
       });
+  }
 
-      const pool = outside.length ? outside : remaining;
-      const picked = [...pool].sort((a, b) => {
-        if (Math.abs((b.priorityDistance || 0) - (a.priorityDistance || 0)) > EPS) {
-          return (b.priorityDistance || 0) - (a.priorityDistance || 0);
-        }
-        const aMin = minAngleDiffToAnchors(a, anchors);
-        const bMin = minAngleDiffToAnchors(b, anchors);
-        if (Math.abs(bMin - aMin) > EPS) return bMin - aMin;
-        if (Math.abs((b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0)) > EPS) {
-          return (b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0);
-        }
-        return String(a.id || '').localeCompare(String(b.id || ''), 'ja');
-      })[0];
+  function assignStagewiseCoveredIds(people, axes, threshold) {
+    const coveredIds = new Set(axes.map(axis => axis.anchorItemId));
+    people.forEach(item => {
+      if (coveredIds.has(item.itemId)) return;
+      const matches = getPrimaryCandidateAxes(item, axes, threshold);
+      if (!matches.length) return;
+      coveredIds.add(item.itemId);
+    });
+    return coveredIds;
+  }
 
-      if (!picked) break;
-      anchors.push(picked);
-      usedIds.add(String(picked.id));
+  function selectFallbackAxisCandidate(sorted, selectedAnchorIds, axes) {
+    const remaining = sorted.filter(item => !selectedAnchorIds.has(item.itemId));
+    if (!remaining.length) return null;
+    if (!axes.length) return remaining[0] || null;
+
+    return remaining
+      .map(item => {
+        const minAngleDiff = axes.reduce((min, axis) => {
+          const diff = angleDiff(item.angleFromOrigin, axis.anchorAngle);
+          return Math.min(min, diff);
+        }, Infinity);
+        return { item, minAngleDiff };
+      })
+      .sort((a, b) => {
+        if (b.minAngleDiff !== a.minAngleDiff) return b.minAngleDiff - a.minAngleDiff;
+        if (b.item.distanceKm !== a.item.distanceKm) return b.item.distanceKm - a.item.distanceKm;
+        return String(a.item.name || '').localeCompare(String(b.item.name || ''), 'ja');
+      })[0]?.item || null;
+  }
+
+  function selectFixedAxes(people, vehicles, threshold) {
+    const sorted = [...people].sort(byDistanceDesc);
+    const axes = [];
+    if (!sorted.length || !vehicles.length) return axes;
+
+    const selectedAnchorIds = new Set();
+    let coveredIds = new Set();
+
+    for (let i = 0; i < vehicles.length; i += 1) {
+      let candidate = sorted.find(item => !coveredIds.has(item.itemId) && !selectedAnchorIds.has(item.itemId));
+
+      if (!candidate) {
+        candidate = selectFallbackAxisCandidate(sorted, selectedAnchorIds, axes);
+      }
+
+      if (!candidate) break;
+
+      const axis = buildAxis(candidate, i, vehicles[i]);
+      axes.push(axis);
+      selectedAnchorIds.add(candidate.itemId);
+      coveredIds = assignStagewiseCoveredIds(sorted, axes, threshold);
     }
-
-    return anchors.slice(0, maxCount);
+    return axes;
   }
 
-  function createGroups(hourVehicles, anchors) {
-    return anchors.map((anchor, index) => {
-      const vehicle = hourVehicles[index] || {};
-      return {
-        groupId: `group_${index + 1}`,
-        vehicleId: toNumber(vehicle.id, 0),
-        vehicleName: String(vehicle.driver_name || vehicle.name || ''),
-        capacity: Math.max(1, toNumber(vehicle.seat_capacity ?? vehicle.capacity, 4)),
-        anchor,
-        anchorId: toNumber(anchor.id, 0),
-        members: [],
-        routeOrder: [anchor],
-        routeDistance: 0,
-        totalDistance: 0
-      };
+  function pushPendingMembers(people, axes, threshold) {
+    const anchorIds = new Set(axes.map(axis => axis.anchorItemId));
+    const unresolved = [];
+
+    people.forEach(item => {
+      if (anchorIds.has(item.itemId)) return;
+      const matches = getPrimaryCandidateAxes(item, axes, threshold);
+      if (!matches.length) {
+        unresolved.push(item);
+        return;
+      }
+      if (matches.length === 1) {
+        matches[0].axis.pending.push(item);
+        return;
+      }
+      unresolved.push(item);
+    });
+
+    axes.forEach(axis => {
+      axis.pending.sort(byDistanceDesc);
+      const freeSeats = Math.max(0, axis.capacity - axis.members.length);
+      axis.members.push(...axis.pending.slice(0, freeSeats));
+      axis.overflowed.push(...axis.pending.slice(freeSeats));
+      axis.pending = [];
+    });
+
+    return unresolved.concat(axes.flatMap(axis => axis.overflowed));
+  }
+
+  function getAllAxisChoices(item, axes) {
+    return axes
+      .map(axis => ({ axis, diff: angleDiff(item.angleFromOrigin, axis.anchorAngle) }))
+      .sort((a, b) => {
+        if (a.diff !== b.diff) return a.diff - b.diff;
+        if (b.axis.anchorDistanceKm !== a.axis.anchorDistanceKm) return b.axis.anchorDistanceKm - a.axis.anchorDistanceKm;
+        return String(a.axis.axisId).localeCompare(String(b.axis.axisId), 'ja');
+      });
+  }
+
+  function resolveUnsettledMembers(unresolved, axes) {
+    const overflow = [];
+    const sorted = [...unresolved].sort(byDistanceDesc);
+
+    sorted.forEach(item => {
+      const choices = getAllAxisChoices(item, axes);
+      const target = choices.find(choice => choice.axis.members.length < choice.axis.capacity);
+      if (!target) {
+        overflow.push(item);
+        return;
+      }
+      target.axis.members.push(item);
+    });
+
+    return overflow;
+  }
+
+  function finalizeAxisOrder(axes) {
+    axes.forEach(axis => {
+      axis.members.sort(byDistanceAsc);
     });
   }
 
-  function chooseTargetGroup(groups, person) {
-    const candidates = (groups || []).map((group, index) => ({
-      group,
-      index,
-      diff: angleDiff(person.angleFromOrigin, group.anchor?.angleFromOrigin),
-      count: Array.isArray(group.members) ? group.members.length : 0
-    })).filter(entry => {
-      const memberCount = Array.isArray(entry.group.members) ? entry.group.members.length : 0;
-      return memberCount < Math.max(0, toNumber(entry.group.capacity, 0) - 1);
-    });
-
-    if (!candidates.length) return null;
-
-    const within = candidates.filter(entry => entry.diff <= ANGLE_THRESHOLD);
-    const pool = within.length ? within : candidates;
-
-    pool.sort((a, b) => {
-      if (Math.abs(a.diff - b.diff) > EPS) return a.diff - b.diff;
-      const aAnchorDistance = toNumber(a.group.anchor?.priorityDistance, 0);
-      const bAnchorDistance = toNumber(b.group.anchor?.priorityDistance, 0);
-      if (Math.abs(bAnchorDistance - aAnchorDistance) > EPS) return bAnchorDistance - aAnchorDistance;
-      if (a.count !== b.count) return a.count - b.count;
-      return toNumber(a.group.vehicleId, 0) - toNumber(b.group.vehicleId, 0);
-    });
-
-    return pool[0];
-  }
-
-  function buildRouteOrder(group) {
-    const sortedMembers = sortByOriginDistanceAsc(group.members || []);
-    return [...sortedMembers, group.anchor].filter(Boolean);
-  }
-
-  function calcRouteDistance(origin, orderedPeople) {
-    const rows = Array.isArray(orderedPeople) ? orderedPeople.filter(Boolean) : [];
-    if (!rows.length) return 0;
-    let total = 0;
-    let current = origin;
-    rows.forEach(person => {
-      total += distanceKm(current, person);
-      current = person;
-    });
-    return Number(total.toFixed(6));
-  }
-
-  function refreshGroupMetrics(origin, groups) {
-    (groups || []).forEach(group => {
-      group.members = sortByOriginDistanceAsc(group.members || []);
-      group.routeOrder = buildRouteOrder(group);
-      group.routeDistance = calcRouteDistance(origin, group.routeOrder);
-      group.totalDistance = group.routeDistance;
-    });
-  }
-
-  function buildAssignmentsFromGroups(groups, hour) {
-    const rows = [];
-    (groups || []).forEach(group => {
-      const ordered = Array.isArray(group.routeOrder) ? group.routeOrder : [];
-      ordered.forEach((person, index) => {
-        rows.push({
-          item_id: toNumber(person.id, 0),
-          vehicle_id: toNumber(group.vehicleId, 0),
-          actual_hour: toNumber(hour, 0),
-          driver_name: String(group.vehicleName || ''),
-          distance_km: toNumber(person.raw?.distance_km ?? person.distance_km, 0),
+  function buildAssignments(axes) {
+    const assignments = [];
+    axes.forEach(axis => {
+      axis.members.forEach((item, index) => {
+        assignments.push({
+          item_id: item.itemId,
+          actual_hour: item.actualHour,
+          vehicle_id: axis.vehicleId,
+          driver_name: axis.driverName,
+          distance_km: item.distanceKm,
           stop_order: index + 1
         });
       });
     });
-    return rows;
+    return assignments;
   }
 
-  function buildHourAssignments(origin, hourVehicles, hourPeople) {
-    const anchors = selectAnchors(hourPeople, hourVehicles.length);
-    const groups = createGroups(hourVehicles, anchors);
-    const anchorIds = new Set(anchors.map(anchor => String(anchor.id)));
-    const remaining = sortByOriginDistanceAsc((hourPeople || []).filter(person => !anchorIds.has(String(person.id))));
-    const overflow = [];
-    const evaluations = [];
+  function buildOverflowMeta(overflow) {
+    return {
+      overflowGroups: [],
+      overflowEvaluations: [],
+      capacityOverflowCount: overflow.length,
+      capacityOverflowItems: overflow.map(item => ({
+        itemId: item.itemId,
+        hour: item.actualHour,
+        group: item.area || '無し',
+        distanceKm: item.distanceKm
+      }))
+    };
+  }
 
-    remaining.forEach(person => {
-      const target = chooseTargetGroup(groups, person);
-      if (!target) {
-        overflow.push(person);
-        evaluations.push({
-          itemId: toNumber(person.id, 0),
-          castName: String(person.name || ''),
-          selectedVehicleId: 0,
-          selectedGlobalDistance: 0,
-          hour: toNumber(person.actual_hour, 0),
-          reason: 'no_available_capacity'
+
+
+  function getAxisRepresentative(axis, origin) {
+    const members = Array.isArray(axis?.members) ? axis.members.filter(Boolean) : [];
+    const sorted = [...members].sort(byDistanceDesc);
+    const farthest = sorted[0] || null;
+    return {
+      axis,
+      farthest,
+      point: farthest?.point || null,
+      distanceKm: toNumber(farthest?.distanceKm, 0),
+      angleFromOrigin: Number.isFinite(farthest?.angleFromOrigin) ? farthest.angleFromOrigin : null,
+      size: members.length
+    };
+  }
+
+  function vehicleCanTakeAxis(vehicle, axisRep) {
+    if (!vehicle || !axisRep) return false;
+    if (Number(vehicle.capacity || 0) <= 0) return false;
+    const need = Math.max(1, Number(axisRep.size || 0));
+    return Number(vehicle.capacity || 0) >= need;
+  }
+
+  function pickEligibleVehiclesByScore(vehicles, axisReps) {
+    const needed = axisReps.length;
+    const remaining = [...vehicles];
+    const selected = [];
+    const requirements = [...axisReps].sort((a, b) => (b.size - a.size) || (b.distanceKm - a.distanceKm));
+
+    requirements.forEach(axisRep => {
+      if (selected.length >= needed) return;
+      const eligible = remaining
+        .filter(vehicle => vehicleCanTakeAxis(vehicle, axisRep))
+        .sort((a, b) => {
+          if (a.score !== b.score) return a.score - b.score;
+          if (a.avgDistance !== b.avgDistance) return a.avgDistance - b.avgDistance;
+          return String(a.driverName).localeCompare(String(b.driverName), 'ja');
         });
-        return;
-      }
+      const picked = eligible[0] || remaining.sort((a, b) => {
+        if (a.score !== b.score) return a.score - b.score;
+        return String(a.driverName).localeCompare(String(b.driverName), 'ja');
+      })[0];
+      if (!picked) return;
+      selected.push(picked);
+      const idx = remaining.findIndex(v => v.vehicleId === picked.vehicleId);
+      if (idx >= 0) remaining.splice(idx, 1);
+    });
 
-      target.group.members.push(person);
-      evaluations.push({
-        itemId: toNumber(person.id, 0),
-        castName: String(person.name || ''),
-        selectedVehicleId: toNumber(target.group.vehicleId, 0),
-        selectedGlobalDistance: 0,
-        hour: toNumber(person.actual_hour, 0),
-        anchorName: String(target.group.anchor?.name || ''),
-        anchorId: toNumber(target.group.anchor?.id, 0),
-        angleDiff: Number(target.diff || 0)
+    return selected;
+  }
+
+  function chooseNormalVehicleAssignments(axisReps, vehicles) {
+    const selected = pickEligibleVehiclesByScore(vehicles, axisReps);
+    const selectedMap = new Map(selected.map(v => [v.vehicleId, v]));
+    const leftovers = vehicles.filter(v => !selectedMap.has(v.vehicleId));
+    const pool = [...selected, ...leftovers];
+    const assignments = new Map();
+    const used = new Set();
+
+    [...axisReps].sort((a, b) => (b.distanceKm - a.distanceKm) || (b.size - a.size)).forEach(axisRep => {
+      const candidates = pool
+        .filter(vehicle => !used.has(vehicle.vehicleId) && vehicleCanTakeAxis(vehicle, axisRep))
+        .sort((a, b) => {
+          if (a.score !== b.score) return a.score - b.score;
+          if (a.avgDistance !== b.avgDistance) return a.avgDistance - b.avgDistance;
+          return String(a.driverName).localeCompare(String(b.driverName), 'ja');
+        });
+      const picked = candidates[0] || pool.filter(vehicle => !used.has(vehicle.vehicleId)).sort((a, b) => {
+        if (a.score !== b.score) return a.score - b.score;
+        return String(a.driverName).localeCompare(String(b.driverName), 'ja');
+      })[0];
+      if (!picked) return;
+      assignments.set(axisRep.axis.axisId, picked);
+      used.add(picked.vehicleId);
+    });
+
+    return assignments;
+  }
+
+  function buildLastTripCandidate(axisRep, vehicle, origin) {
+    if (!axisRep?.point || !vehicle?.homePoint) return null;
+    if (!vehicleCanTakeAxis(vehicle, axisRep)) return null;
+    const axisAngle = axisRep.angleFromOrigin;
+    if (!Number.isFinite(axisAngle)) return null;
+    const homeAngle = calcAngleFromOrigin(origin, vehicle.homePoint);
+    const diff = angleDiff(axisAngle, homeAngle);
+    return {
+      axisId: axisRep.axis.axisId,
+      vehicleId: vehicle.vehicleId,
+      diff,
+      homeDistanceKm: haversineKm(axisRep.point, vehicle.homePoint),
+      axisDistanceKm: axisRep.distanceKm,
+      size: axisRep.size
+    };
+  }
+
+  function assignVehiclesToFixedAxes(fixedAxes, normalizedVehicles, origin) {
+    const axisReps = fixedAxes.map(axis => getAxisRepresentative(axis, origin));
+    const lastTripVehicles = normalizedVehicles.filter(vehicle => vehicle.isLastTrip);
+    const normalVehicles = normalizedVehicles.filter(vehicle => !vehicle.isLastTrip);
+    const axisMap = new Map(axisReps.map(rep => [rep.axis.axisId, rep]));
+    const assigned = new Map();
+    const usedVehicles = new Set();
+    const usedAxes = new Set();
+
+    if (!axisReps.length) return assigned;
+
+    if (!lastTripVehicles.length) {
+      return chooseNormalVehicleAssignments(axisReps, normalizedVehicles);
+    }
+
+    const pairCandidates = [];
+    axisReps.forEach(axisRep => {
+      lastTripVehicles.forEach(vehicle => {
+        const entry = buildLastTripCandidate(axisRep, vehicle, origin);
+        if (!entry || entry.diff > 90) return;
+        pairCandidates.push(entry);
       });
     });
 
-    refreshGroupMetrics(origin, groups);
-    return { groups, anchors, overflow, evaluations };
+    pairCandidates.sort((a, b) => {
+      if (a.homeDistanceKm !== b.homeDistanceKm) return a.homeDistanceKm - b.homeDistanceKm;
+      if (a.diff !== b.diff) return a.diff - b.diff;
+      if (b.axisDistanceKm !== a.axisDistanceKm) return b.axisDistanceKm - a.axisDistanceKm;
+      return a.vehicleId - b.vehicleId;
+    });
+
+    pairCandidates.forEach(entry => {
+      if (usedVehicles.has(entry.vehicleId) || usedAxes.has(entry.axisId)) return;
+      const vehicle = normalizedVehicles.find(v => v.vehicleId === entry.vehicleId);
+      if (!vehicle) return;
+      assigned.set(entry.axisId, vehicle);
+      usedVehicles.add(entry.vehicleId);
+      usedAxes.add(entry.axisId);
+    });
+
+    const remainingLastTrip = lastTripVehicles.filter(vehicle => !usedVehicles.has(vehicle.vehicleId));
+
+    remainingLastTrip.forEach(vehicle => {
+      const choices = axisReps
+        .filter(axisRep => !usedAxes.has(axisRep.axis.axisId))
+        .map(axisRep => buildLastTripCandidate(axisRep, vehicle, origin))
+        .filter(Boolean)
+        .filter(entry => entry.diff <= 90)
+        .sort((a, b) => {
+          if (a.homeDistanceKm !== b.homeDistanceKm) return a.homeDistanceKm - b.homeDistanceKm;
+          if (a.diff !== b.diff) return a.diff - b.diff;
+          if (b.axisDistanceKm !== a.axisDistanceKm) return b.axisDistanceKm - a.axisDistanceKm;
+          return a.vehicleId - b.vehicleId;
+        });
+      const picked = choices[0];
+      if (!picked) return;
+      assigned.set(picked.axisId, vehicle);
+      usedVehicles.add(vehicle.vehicleId);
+      usedAxes.add(picked.axisId);
+    });
+
+    let unassignedAxes = axisReps.filter(axisRep => !usedAxes.has(axisRep.axis.axisId));
+    let freeNormalVehicles = normalVehicles.filter(vehicle => !usedVehicles.has(vehicle.vehicleId));
+    let freeLastTripVehicles = lastTripVehicles.filter(vehicle => !usedVehicles.has(vehicle.vehicleId));
+
+    if (unassignedAxes.length > 0 && freeLastTripVehicles.length > 0 && freeNormalVehicles.length < unassignedAxes.length) {
+      freeLastTripVehicles.forEach(vehicle => {
+        if (!unassignedAxes.length) return;
+        if (freeNormalVehicles.length >= unassignedAxes.length) return;
+        const choices = unassignedAxes
+          .map(axisRep => buildLastTripCandidate(axisRep, vehicle, origin) || {
+            axisId: axisRep.axis.axisId,
+            vehicleId: vehicle.vehicleId,
+            diff: Infinity,
+            homeDistanceKm: vehicle.homePoint && axisRep.point ? haversineKm(axisRep.point, vehicle.homePoint) : Infinity,
+            axisDistanceKm: axisRep.distanceKm,
+            size: axisRep.size
+          })
+          .sort((a, b) => {
+            if (a.homeDistanceKm !== b.homeDistanceKm) return a.homeDistanceKm - b.homeDistanceKm;
+            if (a.diff !== b.diff) return a.diff - b.diff;
+            if (b.axisDistanceKm !== a.axisDistanceKm) return b.axisDistanceKm - a.axisDistanceKm;
+            return a.vehicleId - b.vehicleId;
+          });
+        const picked = choices[0];
+        if (!picked) return;
+        assigned.set(picked.axisId, vehicle);
+        usedVehicles.add(vehicle.vehicleId);
+        usedAxes.add(picked.axisId);
+        unassignedAxes = axisReps.filter(axisRep => !usedAxes.has(axisRep.axis.axisId));
+        freeNormalVehicles = normalVehicles.filter(v => !usedVehicles.has(v.vehicleId));
+      });
+    }
+
+    unassignedAxes = axisReps.filter(axisRep => !usedAxes.has(axisRep.axis.axisId));
+    const remainingVehicles = normalizedVehicles.filter(vehicle => !usedVehicles.has(vehicle.vehicleId));
+    const normalAssignments = chooseNormalVehicleAssignments(unassignedAxes, remainingVehicles);
+    normalAssignments.forEach((vehicle, axisId) => {
+      assigned.set(axisId, vehicle);
+      usedVehicles.add(vehicle.vehicleId);
+      usedAxes.add(axisId);
+    });
+
+    return assigned;
+  }
+
+  function applyVehicleAssignmentsToAxes(fixedAxes, vehicleAssignments) {
+    fixedAxes.forEach(axis => {
+      const vehicle = vehicleAssignments.get(axis.axisId);
+      if (!vehicle) return;
+      axis.vehicleId = vehicle.vehicleId;
+      axis.driverName = vehicle.driverName;
+      axis.capacity = vehicle.capacity;
+    });
   }
 
   function optimizeAssignments(items, vehicles, monthlyMap, options = {}) {
     const origin = getOrigin();
-    const safeItems = (Array.isArray(items) ? items : []).filter(Boolean);
-    const safeVehicles = (Array.isArray(vehicles) ? vehicles : []).filter(Boolean).map(normalizeVehicle).filter(v => v.id);
+    const normalizedVehicles = (Array.isArray(vehicles) ? vehicles : [])
+      .map(vehicle => normalizeVehicle(vehicle, monthlyMap))
+      .filter(vehicle => vehicle.vehicleId > 0 && vehicle.capacity > 0);
 
-    if (!origin || !safeItems.length || !safeVehicles.length) {
-      globalThis.__THEMIS_LAST_OVERFLOW__ = {
-        mode: 'anchor_slot_fixed',
-        vehicleCount: safeVehicles.length,
-        actualGroupCount: 0,
-        keptGroups: [],
-        overflowGroups: [],
-        evaluations: [],
-        totalSeatCapacity: safeVehicles.reduce((sum, v) => sum + Math.max(1, toNumber(v.seat_capacity, 4)), 0),
-        totalCastCount: safeItems.length,
-        capacityOverflowCount: 0,
-        capacityOverflowItems: [],
-        selectedAreas: []
-      };
+    const normalizedItems = (Array.isArray(items) ? items : [])
+      .map(item => normalizeItem(item, origin))
+      .filter(item => item.itemId > 0 && Number.isFinite(item.distanceKm) && Number.isFinite(item.angleFromOrigin));
+
+    if (!normalizedVehicles.length || !normalizedItems.length) {
+      global.__THEMIS_LAST_OVERFLOW__ = buildOverflowMeta([]);
       return [];
     }
 
-    const validPeople = [];
-    const invalidPeople = [];
-    safeItems.forEach(item => {
-      const person = normalizePerson(item, origin);
-      if (person) validPeople.push(person);
-      else invalidPeople.push(item);
-    });
+    const vehicleCount = Math.min(normalizedVehicles.length, normalizedItems.length);
+    const threshold = Number(options?.axisThreshold || AREA_MEMBER_ANGLE_THRESHOLD);
 
-    if (!validPeople.length) {
-      globalThis.__THEMIS_LAST_OVERFLOW__ = {
-        mode: 'anchor_slot_fixed',
-        vehicleCount: safeVehicles.length,
-        actualGroupCount: 0,
-        keptGroups: [],
-        overflowGroups: [],
-        evaluations: [],
-        totalSeatCapacity: safeVehicles.reduce((sum, v) => sum + Math.max(1, toNumber(v.seat_capacity, 4)), 0),
-        totalCastCount: safeItems.length,
-        capacityOverflowCount: invalidPeople.length,
-        capacityOverflowItems: invalidPeople.map(item => ({
-          itemId: toNumber(item?.id, 0),
-          hour: toNumber(item?.actual_hour ?? item?.plan_hour, 0),
-          castName: String(item?.casts?.name || item?.name || ''),
-          distanceKm: 0,
-          area: normalizeAreaLabel(item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || ''),
-          reason: 'missing_coordinates'
-        })),
-        selectedAreas: []
-      };
-      return [];
+    const fixedAxes = selectFixedAxes(normalizedItems, normalizedVehicles.slice(0, vehicleCount), threshold);
+    try {
+      debugLog('[DispatchCore][AXES]', fixedAxes.map(axis => ({
+        axisId: axis.axisId,
+        vehicleId: axis.vehicleId,
+        driverName: axis.driverName,
+        anchorName: axis.anchorName,
+        anchorDistanceKm: Number(axis.anchorDistanceKm || 0),
+        anchorAngle: Number(axis.anchorAngle || 0)
+      })));
+    } catch (error) {
+      debugWarn('[DispatchCore][AXES] log failed:', error);
     }
 
-    const itemsByHour = new Map();
-    validPeople.forEach(person => {
-      const hour = toNumber(person.actual_hour, 0);
-      if (!itemsByHour.has(hour)) itemsByHour.set(hour, []);
-      itemsByHour.get(hour).push(person);
-    });
+    const unsettled = pushPendingMembers(normalizedItems, fixedAxes, threshold);
+    const overflow = resolveUnsettledMembers(unsettled, fixedAxes);
+    finalizeAxisOrder(fixedAxes);
 
-    const assignments = [];
-    const meta = {
-      mode: 'anchor_slot_fixed',
-      vehicleCount: safeVehicles.length,
-      actualGroupCount: 0,
-      keptGroups: [],
-      overflowGroups: [],
-      evaluations: [],
-      totalSeatCapacity: safeVehicles.reduce((sum, v) => sum + Math.max(1, toNumber(v.seat_capacity, 4)), 0),
-      totalCastCount: safeItems.length,
-      capacityOverflowCount: 0,
-      capacityOverflowItems: [],
-      selectedAreas: []
+    const vehicleAssignments = assignVehiclesToFixedAxes(fixedAxes, normalizedVehicles.slice(0, vehicleCount), origin);
+    applyVehicleAssignmentsToAxes(fixedAxes, vehicleAssignments);
+
+    const assignments = buildAssignments(fixedAxes);
+    try {
+      debugLog('[DispatchCore][RESULT]', fixedAxes.map(axis => ({
+        axisId: axis.axisId,
+        vehicleId: axis.vehicleId,
+        driverName: axis.driverName,
+        anchorName: axis.anchorName,
+        memberNames: axis.members.map(item => item.name),
+        memberCount: axis.members.length,
+        capacity: axis.capacity
+      })));
+    } catch (error) {
+      debugWarn('[DispatchCore][RESULT] log failed:', error);
+    }
+    global.__THEMIS_LAST_OVERFLOW__ = {
+      ...buildOverflowMeta(overflow),
+      fixedAxes: fixedAxes.map(axis => ({
+        axisId: axis.axisId,
+        vehicleId: axis.vehicleId,
+        driverName: axis.driverName,
+        anchorItemId: axis.anchorItemId,
+        anchorName: axis.anchorName,
+        anchorAngle: axis.anchorAngle,
+        anchorDistanceKm: axis.anchorDistanceKm,
+        memberItemIds: axis.members.map(item => item.itemId)
+      })),
+      totalSeatCapacity: fixedAxes.reduce((sum, axis) => sum + Number(axis.capacity || 0), 0),
+      totalCastCount: normalizedItems.length,
+      version: VERSION
     };
 
-    [...itemsByHour.keys()].sort((a, b) => a - b).forEach(hour => {
-      const hourPeople = itemsByHour.get(hour) || [];
-      const result = buildHourAssignments(origin, safeVehicles, hourPeople);
-      meta.actualGroupCount += result.groups.length;
-      meta.evaluations.push(...result.evaluations);
-
-      result.groups.forEach(group => {
-        const memberIds = (group.members || []).map(person => toNumber(person.id, 0)).filter(Boolean);
-        const orderedIds = (group.routeOrder || []).map(person => toNumber(person.id, 0)).filter(Boolean);
-        meta.keptGroups.push({
-          hour: toNumber(hour, 0),
-          groupId: String(group.groupId || ''),
-          vehicleId: toNumber(group.vehicleId, 0),
-          vehicleName: String(group.vehicleName || ''),
-          anchorId: toNumber(group.anchor?.id, 0),
-          anchorName: String(group.anchor?.name || ''),
-          anchorDistance: Number(group.anchor?.priorityDistance || 0),
-          anchorAngle: Number(group.anchor?.angleFromOrigin || 0),
-          count: (group.routeOrder || []).length,
-          itemIds: orderedIds,
-          memberIds,
-          routeDistance: Number(group.routeDistance || 0),
-          area: String(group.anchor?.destination_area || '')
-        });
-        meta.selectedAreas.push(`${hour}:${String(group.anchor?.destination_area || '')}:${String(group.anchor?.name || '')}`);
-      });
-
-      if (result.overflow.length) {
-        meta.overflowGroups.push({
-          hour: toNumber(hour, 0),
-          group: `overflow_${hour}`,
-          count: result.overflow.length,
-          itemIds: result.overflow.map(person => toNumber(person.id, 0)).filter(Boolean)
-        });
-        meta.capacityOverflowCount += result.overflow.length;
-        meta.capacityOverflowItems.push(...result.overflow.map(person => ({
-          itemId: toNumber(person.id, 0),
-          hour: toNumber(hour, 0),
-          castName: String(person.name || ''),
-          distanceKm: Number(person.priorityDistance || 0),
-          area: String(person.destination_area || ''),
-          reason: 'no_available_capacity'
-        })));
-      }
-
-      assignments.push(...buildAssignmentsFromGroups(result.groups, hour));
-    });
-
-    if (invalidPeople.length) {
-      meta.capacityOverflowCount += invalidPeople.length;
-      meta.capacityOverflowItems.push(...invalidPeople.map(item => ({
-        itemId: toNumber(item?.id, 0),
-        hour: toNumber(item?.actual_hour ?? item?.plan_hour, 0),
-        castName: String(item?.casts?.name || item?.name || ''),
-        distanceKm: 0,
-        area: normalizeAreaLabel(item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || ''),
-        reason: 'missing_coordinates'
-      })));
-    }
-
-    globalThis.__THEMIS_LAST_OVERFLOW__ = meta;
-
-    return assignments.sort((a, b) => {
-      if (toNumber(a.actual_hour, 0) !== toNumber(b.actual_hour, 0)) return toNumber(a.actual_hour, 0) - toNumber(b.actual_hour, 0);
-      if (toNumber(a.vehicle_id, 0) !== toNumber(b.vehicle_id, 0)) return toNumber(a.vehicle_id, 0) - toNumber(b.vehicle_id, 0);
-      if (toNumber(a.stop_order, 0) !== toNumber(b.stop_order, 0)) return toNumber(a.stop_order, 0) - toNumber(b.stop_order, 0);
-      return toNumber(a.item_id, 0) - toNumber(b.item_id, 0);
-    });
+    return assignments;
   }
 
-  return {
+  function runDispatchPlan(origin, vehicles, people) {
+    return optimizeAssignments(people, vehicles, null, {});
+  }
+
+  global.DispatchCore = {
+    VERSION,
     optimizeAssignments,
-    pureOptimizeAssignments: optimizeAssignments,
-    selectAnchors
+    runDispatchPlan
   };
-})();
+})(window);
