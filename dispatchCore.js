@@ -1,516 +1,449 @@
-window.DispatchCore = {
-  optimizeAssignments: function (items, vehicles, monthlyMap, options = {}) {
-    const g = globalThis;
+window.DispatchCore = (function () {
+  const ANGLE_THRESHOLD = 70;
+  const EPS = 1e-9;
 
-    const normalizeArea = (area) => {
-      if (typeof g.normalizeAreaLabel === 'function') return g.normalizeAreaLabel(area || '');
-      return String(area || '').trim();
+  function toNumber(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function normalizeAngle(angle) {
+    const n = toNumber(angle, 0) % 360;
+    return n < 0 ? n + 360 : n;
+  }
+
+  function angleDiff(a, b) {
+    const diff = Math.abs(normalizeAngle(a) - normalizeAngle(b));
+    return diff > 180 ? 360 - diff : diff;
+  }
+
+  function getOrigin() {
+    const lat = toNumber(globalThis.ORIGIN_LAT ?? globalThis.window?.APP_CONFIG?.ORIGIN_LAT, NaN);
+    const lng = toNumber(globalThis.ORIGIN_LNG ?? globalThis.window?.APP_CONFIG?.ORIGIN_LNG, NaN);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  }
+
+  function distanceKm(a, b) {
+    const lat1 = toNumber(a?.lat, NaN);
+    const lng1 = toNumber(a?.lng, NaN);
+    const lat2 = toNumber(b?.lat, NaN);
+    const lng2 = toNumber(b?.lng, NaN);
+    if (![lat1, lng1, lat2, lng2].every(Number.isFinite)) return 0;
+
+    const toRad = deg => (deg * Math.PI) / 180;
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const p1 = toRad(lat1);
+    const p2 = toRad(lat2);
+    const x = Math.sin(dLat / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLng / 2) ** 2;
+    const y = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    return R * y;
+  }
+
+  function calcAngleFromOrigin(origin, point) {
+    const dx = toNumber(point?.lng, 0) - toNumber(origin?.lng, 0);
+    const dy = toNumber(point?.lat, 0) - toNumber(origin?.lat, 0);
+    return normalizeAngle((Math.atan2(dy, dx) * 180) / Math.PI);
+  }
+
+  function normalizeAreaLabel(value) {
+    if (typeof globalThis.normalizeAreaLabel === 'function') {
+      return globalThis.normalizeAreaLabel(value || '');
+    }
+    return String(value || '').trim();
+  }
+
+  function normalizeVehicle(vehicle) {
+    return {
+      id: toNumber(vehicle?.id, 0),
+      driver_name: String(vehicle?.driver_name || vehicle?.name || vehicle?.vehicleName || vehicle?.plate_number || ''),
+      seat_capacity: Math.max(1, toNumber(vehicle?.seat_capacity ?? vehicle?.capacity, 4)),
+      raw: vehicle
     };
-    const canonicalArea = (area) => {
-      const a = normalizeArea(area);
-      if (typeof g.getCanonicalArea === 'function') return g.getCanonicalArea(a) || a;
-      return a;
+  }
+
+  function normalizePerson(item, origin) {
+    const lat = toNumber(item?.casts?.latitude ?? item?.latitude ?? item?.lat, NaN);
+    const lng = toNumber(item?.casts?.longitude ?? item?.longitude ?? item?.lng, NaN);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    const point = { lat, lng };
+    const angleFromOrigin = calcAngleFromOrigin(origin, point);
+    const distanceFromOrigin = distanceKm(origin, point);
+    const dispatchDistance = toNumber(item?.distance_km ?? item?.casts?.distance_km, 0);
+
+    return {
+      id: toNumber(item?.id, 0),
+      cast_id: toNumber(item?.cast_id, 0),
+      name: String(item?.casts?.name || item?.name || ''),
+      actual_hour: toNumber(item?.actual_hour ?? item?.plan_hour, 0),
+      lat,
+      lng,
+      angleFromOrigin,
+      distanceFromOrigin,
+      distance_km: dispatchDistance,
+      priorityDistance: dispatchDistance > 0 ? dispatchDistance : distanceFromOrigin,
+      destination_area: normalizeAreaLabel(item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || ''),
+      raw: item
     };
-    const displayGroup = (area) => {
-      const a = normalizeArea(area);
-      if (typeof g.getAreaDisplayGroup === 'function') return g.getAreaDisplayGroup(a) || a;
-      return a;
-    };
-    const areaAffinity = (a, b) => {
-      if (typeof g.getAreaAffinityScore === 'function') return Number(g.getAreaAffinityScore(a, b) || 0);
-      return canonicalArea(a) === canonicalArea(b) ? 100 : 0;
-    };
-    const directionAffinity = (a, b) => {
-      if (typeof g.getDirectionAffinityScore === 'function') return Number(g.getDirectionAffinityScore(a, b) || 0);
-      return canonicalArea(a) === canonicalArea(b) ? 100 : 0;
-    };
-    const strictHome = (area, home) => {
-      if (typeof g.getStrictHomeCompatibilityScore === 'function') return Number(g.getStrictHomeCompatibilityScore(area, home) || 0);
-      return canonicalArea(area) === canonicalArea(home) ? 100 : 0;
-    };
-    const isLastTripChecked = (vehicleId) => {
-      if (typeof g.isDriverLastTripChecked === 'function') return !!g.isDriverLastTripChecked(Number(vehicleId || 0));
-      return false;
-    };
-    const toNumber = (value) => {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : 0;
-    };
-    const getRowPoint = (row) => {
-      const lat = Number(row?.casts?.latitude ?? row?.latitude ?? row?.lat);
-      const lng = Number(row?.casts?.longitude ?? row?.longitude ?? row?.lng);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-      return { lat, lng };
-    };
-    const getRowDistanceKm = (row) => {
-      return Math.max(0, toNumber(row?.distance_km ?? row?.casts?.distance_km ?? 0));
-    };
-    const getRowTravelMinutes = (row) => {
-      return Math.max(0, toNumber(row?.travel_minutes ?? row?.casts?.travel_minutes ?? 0));
-    };
-    const getRowDerivedSpeedKmh = (row) => {
-      const km = Math.max(0, getRowDistanceKm(row));
-      const minutes = Math.max(0, getRowTravelMinutes(row));
-      if (km <= 0 || minutes <= 0) return 0;
-      return (km / minutes) * 60;
-    };
-    const distanceBetweenPointsKm = (fromPoint, toPoint) => {
-      if (!fromPoint || !toPoint) return 0;
-      const rad = (deg) => (deg * Math.PI) / 180;
-      const R = 6371;
-      const dLat = rad(toPoint.lat - fromPoint.lat);
-      const dLng = rad(toPoint.lng - fromPoint.lng);
-      const lat1 = rad(fromPoint.lat);
-      const lat2 = rad(toPoint.lat);
-      const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
-    const calcLegacyRoundTripSummary = (rows, vehicleId = 0) => {
-      const ordered = Array.isArray(rows) ? rows.filter(Boolean) : [];
-      if (!ordered.length) {
-        return {
-          outboundKm: 0,
-          returnKm: 0,
-          totalKm: 0,
-          outboundMinutes: 0,
-          returnMinutes: 0,
-          totalMinutes: 0,
-          legKm: [],
-          legMinutes: [],
-          model: 'legacy_segment_speed'
-        };
+  }
+
+  function sortByAnchorPriorityDesc(people) {
+    return [...people].sort((a, b) => {
+      if (Math.abs((b.priorityDistance || 0) - (a.priorityDistance || 0)) > EPS) {
+        return (b.priorityDistance || 0) - (a.priorityDistance || 0);
       }
+      if (Math.abs((b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0)) > EPS) {
+        return (b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0);
+      }
+      return String(a.id || '').localeCompare(String(b.id || ''), 'ja');
+    });
+  }
 
-      let outboundKm = 0;
-      let outboundMinutes = 0;
-      const legKm = [];
-      const legMinutes = [];
-      let previousPoint = null;
+  function sortByOriginDistanceAsc(people) {
+    return [...people].sort((a, b) => {
+      if (Math.abs((a.distanceFromOrigin || 0) - (b.distanceFromOrigin || 0)) > EPS) {
+        return (a.distanceFromOrigin || 0) - (b.distanceFromOrigin || 0);
+      }
+      if (Math.abs((a.priorityDistance || 0) - (b.priorityDistance || 0)) > EPS) {
+        return (a.priorityDistance || 0) - (b.priorityDistance || 0);
+      }
+      return String(a.id || '').localeCompare(String(b.id || ''), 'ja');
+    });
+  }
 
-      ordered.forEach((row, index) => {
-        let km = 0;
-        let minutes = 0;
-        if (index === 0) {
-          km = getRowDistanceKm(row);
-          minutes = getRowTravelMinutes(row);
-        } else {
-          const currentPoint = getRowPoint(row);
-          km = previousPoint && currentPoint
-            ? distanceBetweenPointsKm(previousPoint, currentPoint)
-            : getRowDistanceKm(row);
-          const speed = getRowDerivedSpeedKmh(row);
-          if (speed > 0) {
-            minutes = (km / speed) * 60;
-          } else {
-            minutes = getRowTravelMinutes(row);
-          }
-        }
-        km = Math.max(0, Number(km || 0));
-        minutes = Math.max(0, Number(minutes || 0));
-        legKm.push(Number(km.toFixed(1)));
-        legMinutes.push(Math.round(minutes));
-        outboundKm += km;
-        outboundMinutes += minutes;
-        previousPoint = getRowPoint(row) || previousPoint;
+  function minAngleDiffToAnchors(person, anchors) {
+    if (!Array.isArray(anchors) || !anchors.length) return 999;
+    return anchors.reduce((min, anchor) => {
+      return Math.min(min, angleDiff(person.angleFromOrigin, anchor.angleFromOrigin));
+    }, 999);
+  }
+
+  function selectAnchors(people, vehicleCount) {
+    const maxCount = Math.max(0, toNumber(vehicleCount, 0));
+    if (!Array.isArray(people) || !people.length || maxCount <= 0) return [];
+
+    const sorted = sortByAnchorPriorityDesc(people);
+    const anchors = [];
+    const usedIds = new Set();
+
+    const first = sorted[0];
+    if (first) {
+      anchors.push(first);
+      usedIds.add(String(first.id));
+    }
+
+    while (anchors.length < maxCount) {
+      const remaining = sorted.filter(person => !usedIds.has(String(person.id)));
+      if (!remaining.length) break;
+
+      const outside = remaining.filter(person => {
+        return anchors.every(anchor => angleDiff(person.angleFromOrigin, anchor.angleFromOrigin) >= ANGLE_THRESHOLD);
       });
 
-      const lastRow = ordered[ordered.length - 1] || null;
-      const returnKm = isLastTripChecked(vehicleId) ? 0 : getRowDistanceKm(lastRow);
-      const returnMinutes = isLastTripChecked(vehicleId) ? 0 : getRowTravelMinutes(lastRow);
-      const totalKm = outboundKm + returnKm;
-      const totalMinutes = outboundMinutes + returnMinutes;
+      const pool = outside.length ? outside : remaining;
+      const picked = [...pool].sort((a, b) => {
+        if (Math.abs((b.priorityDistance || 0) - (a.priorityDistance || 0)) > EPS) {
+          return (b.priorityDistance || 0) - (a.priorityDistance || 0);
+        }
+        const aMin = minAngleDiffToAnchors(a, anchors);
+        const bMin = minAngleDiffToAnchors(b, anchors);
+        if (Math.abs(bMin - aMin) > EPS) return bMin - aMin;
+        if (Math.abs((b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0)) > EPS) {
+          return (b.distanceFromOrigin || 0) - (a.distanceFromOrigin || 0);
+        }
+        return String(a.id || '').localeCompare(String(b.id || ''), 'ja');
+      })[0];
 
+      if (!picked) break;
+      anchors.push(picked);
+      usedIds.add(String(picked.id));
+    }
+
+    return anchors.slice(0, maxCount);
+  }
+
+  function createGroups(hourVehicles, anchors) {
+    return anchors.map((anchor, index) => {
+      const vehicle = hourVehicles[index] || {};
       return {
-        outboundKm: Number(outboundKm.toFixed(1)),
-        returnKm: Number(returnKm.toFixed(1)),
-        totalKm: Number(totalKm.toFixed(1)),
-        outboundMinutes: Math.round(outboundMinutes),
-        returnMinutes: Math.round(returnMinutes),
-        totalMinutes: Math.round(totalMinutes),
-        legKm,
-        legMinutes,
-        model: 'legacy_segment_speed'
+        groupId: `group_${index + 1}`,
+        vehicleId: toNumber(vehicle.id, 0),
+        vehicleName: String(vehicle.driver_name || vehicle.name || ''),
+        capacity: Math.max(1, toNumber(vehicle.seat_capacity ?? vehicle.capacity, 4)),
+        anchor,
+        anchorId: toNumber(anchor.id, 0),
+        members: [],
+        routeOrder: [anchor],
+        routeDistance: 0,
+        totalDistance: 0
       };
-    };
-    const calcRouteKm = (rows, vehicleId = 0) => {
-      return Number(calcLegacyRoundTripSummary(rows, vehicleId).totalKm || 0);
-    };
-    const calcRouteMinutes = (rows, vehicleId = 0) => {
-      return Number(calcLegacyRoundTripSummary(rows, vehicleId).totalMinutes || 0);
-    };
+    });
+  }
 
-    const sortCandidateRows = (rows) => {
-      const safeRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
-      if (typeof g.sortItemsByNearestRoute === 'function') {
-        try {
-          return g.sortItemsByNearestRoute(safeRows.map(entry => entry?.raw || entry));
-        } catch (error) {}
+  function chooseTargetGroup(groups, person) {
+    const candidates = (groups || []).map((group, index) => ({
+      group,
+      index,
+      diff: angleDiff(person.angleFromOrigin, group.anchor?.angleFromOrigin),
+      count: Array.isArray(group.members) ? group.members.length : 0
+    })).filter(entry => {
+      const memberCount = Array.isArray(entry.group.members) ? entry.group.members.length : 0;
+      return memberCount < Math.max(0, toNumber(entry.group.capacity, 0) - 1);
+    });
+
+    if (!candidates.length) return null;
+
+    const within = candidates.filter(entry => entry.diff <= ANGLE_THRESHOLD);
+    const pool = within.length ? within : candidates;
+
+    pool.sort((a, b) => {
+      if (Math.abs(a.diff - b.diff) > EPS) return a.diff - b.diff;
+      const aAnchorDistance = toNumber(a.group.anchor?.priorityDistance, 0);
+      const bAnchorDistance = toNumber(b.group.anchor?.priorityDistance, 0);
+      if (Math.abs(bAnchorDistance - aAnchorDistance) > EPS) return bAnchorDistance - aAnchorDistance;
+      if (a.count !== b.count) return a.count - b.count;
+      return toNumber(a.group.vehicleId, 0) - toNumber(b.group.vehicleId, 0);
+    });
+
+    return pool[0];
+  }
+
+  function buildRouteOrder(group) {
+    const sortedMembers = sortByOriginDistanceAsc(group.members || []);
+    return [...sortedMembers, group.anchor].filter(Boolean);
+  }
+
+  function calcRouteDistance(origin, orderedPeople) {
+    const rows = Array.isArray(orderedPeople) ? orderedPeople.filter(Boolean) : [];
+    if (!rows.length) return 0;
+    let total = 0;
+    let current = origin;
+    rows.forEach(person => {
+      total += distanceKm(current, person);
+      current = person;
+    });
+    return Number(total.toFixed(6));
+  }
+
+  function refreshGroupMetrics(origin, groups) {
+    (groups || []).forEach(group => {
+      group.members = sortByOriginDistanceAsc(group.members || []);
+      group.routeOrder = buildRouteOrder(group);
+      group.routeDistance = calcRouteDistance(origin, group.routeOrder);
+      group.totalDistance = group.routeDistance;
+    });
+  }
+
+  function buildAssignmentsFromGroups(groups, hour) {
+    const rows = [];
+    (groups || []).forEach(group => {
+      const ordered = Array.isArray(group.routeOrder) ? group.routeOrder : [];
+      ordered.forEach((person, index) => {
+        rows.push({
+          item_id: toNumber(person.id, 0),
+          vehicle_id: toNumber(group.vehicleId, 0),
+          actual_hour: toNumber(hour, 0),
+          driver_name: String(group.vehicleName || ''),
+          distance_km: toNumber(person.raw?.distance_km ?? person.distance_km, 0),
+          stop_order: index + 1
+        });
+      });
+    });
+    return rows;
+  }
+
+  function buildHourAssignments(origin, hourVehicles, hourPeople) {
+    const anchors = selectAnchors(hourPeople, hourVehicles.length);
+    const groups = createGroups(hourVehicles, anchors);
+    const anchorIds = new Set(anchors.map(anchor => String(anchor.id)));
+    const remaining = sortByOriginDistanceAsc((hourPeople || []).filter(person => !anchorIds.has(String(person.id))));
+    const overflow = [];
+    const evaluations = [];
+
+    remaining.forEach(person => {
+      const target = chooseTargetGroup(groups, person);
+      if (!target) {
+        overflow.push(person);
+        evaluations.push({
+          itemId: toNumber(person.id, 0),
+          castName: String(person.name || ''),
+          selectedVehicleId: 0,
+          selectedGlobalDistance: 0,
+          hour: toNumber(person.actual_hour, 0),
+          reason: 'no_available_capacity'
+        });
+        return;
       }
-      return safeRows
-        .map(entry => entry?.raw || entry)
-        .sort((a, b) => Number(a?.distance_km || a?.casts?.distance_km || 0) - Number(b?.distance_km || b?.casts?.distance_km || 0) || Number(a?.id || 0) - Number(b?.id || 0));
-    };
 
-    const pre = Array.isArray(options.preAssignedAssignments) ? options.preAssignedAssignments : [];
-    const preIds = new Set(pre.map(p => Number(p.item_id || 0)).filter(Boolean));
+      target.group.members.push(person);
+      evaluations.push({
+        itemId: toNumber(person.id, 0),
+        castName: String(person.name || ''),
+        selectedVehicleId: toNumber(target.group.vehicleId, 0),
+        selectedGlobalDistance: 0,
+        hour: toNumber(person.actual_hour, 0),
+        anchorName: String(target.group.anchor?.name || ''),
+        anchorId: toNumber(target.group.anchor?.id, 0),
+        angleDiff: Number(target.diff || 0)
+      });
+    });
 
-    const safeVehicles = (vehicles || []).filter(Boolean);
-    const availableVehicles = safeVehicles.filter(v => (
-      v.status === 'available' || (v.status === 'returning' && Number(v.return_in_minutes || 0) <= 10)
-    ));
-    const dispatchVehicles = availableVehicles.length ? availableVehicles : safeVehicles;
-    if (!dispatchVehicles.length) {
-      g.__THEMIS_LAST_OVERFLOW__ = {
-        mode: 'fixed_append',
-        vehicleCount: 0,
+    refreshGroupMetrics(origin, groups);
+    return { groups, anchors, overflow, evaluations };
+  }
+
+  function optimizeAssignments(items, vehicles, monthlyMap, options = {}) {
+    const origin = getOrigin();
+    const safeItems = (Array.isArray(items) ? items : []).filter(Boolean);
+    const safeVehicles = (Array.isArray(vehicles) ? vehicles : []).filter(Boolean).map(normalizeVehicle).filter(v => v.id);
+
+    if (!origin || !safeItems.length || !safeVehicles.length) {
+      globalThis.__THEMIS_LAST_OVERFLOW__ = {
+        mode: 'anchor_slot_fixed',
+        vehicleCount: safeVehicles.length,
         actualGroupCount: 0,
         keptGroups: [],
         overflowGroups: [],
-        evaluations: []
+        evaluations: [],
+        totalSeatCapacity: safeVehicles.reduce((sum, v) => sum + Math.max(1, toNumber(v.seat_capacity, 4)), 0),
+        totalCastCount: safeItems.length,
+        capacityOverflowCount: 0,
+        capacityOverflowItems: [],
+        selectedAreas: []
       };
-      return [...pre];
+      return [];
     }
 
-    const itemRecords = (items || []).filter(i => !preIds.has(Number(i?.id || 0))).map(item => {
-      const area = normalizeArea(item.destination_area || item.cluster_area || item.casts?.area || '');
-      return {
-        raw: item,
-        id: Number(item.id || 0),
-        hour: Number(item.actual_hour ?? item.plan_hour ?? 0),
-        travelMinutes: Number(item.travel_minutes || item.casts?.travel_minutes || 0),
-        distanceKm: Number(item.distance_km || item.casts?.distance_km || 0),
-        area,
-        canonical: canonicalArea(area),
-        group: displayGroup(area)
+    const validPeople = [];
+    const invalidPeople = [];
+    safeItems.forEach(item => {
+      const person = normalizePerson(item, origin);
+      if (person) validPeople.push(person);
+      else invalidPeople.push(item);
+    });
+
+    if (!validPeople.length) {
+      globalThis.__THEMIS_LAST_OVERFLOW__ = {
+        mode: 'anchor_slot_fixed',
+        vehicleCount: safeVehicles.length,
+        actualGroupCount: 0,
+        keptGroups: [],
+        overflowGroups: [],
+        evaluations: [],
+        totalSeatCapacity: safeVehicles.reduce((sum, v) => sum + Math.max(1, toNumber(v.seat_capacity, 4)), 0),
+        totalCastCount: safeItems.length,
+        capacityOverflowCount: invalidPeople.length,
+        capacityOverflowItems: invalidPeople.map(item => ({
+          itemId: toNumber(item?.id, 0),
+          hour: toNumber(item?.actual_hour ?? item?.plan_hour, 0),
+          castName: String(item?.casts?.name || item?.name || ''),
+          distanceKm: 0,
+          area: normalizeAreaLabel(item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || ''),
+          reason: 'missing_coordinates'
+        })),
+        selectedAreas: []
       };
+      return [];
+    }
+
+    const itemsByHour = new Map();
+    validPeople.forEach(person => {
+      const hour = toNumber(person.actual_hour, 0);
+      if (!itemsByHour.has(hour)) itemsByHour.set(hour, []);
+      itemsByHour.get(hour).push(person);
     });
 
-    const overallGroups = new Map();
-    itemRecords.forEach(item => {
-      if (!overallGroups.has(item.group)) overallGroups.set(item.group, []);
-      overallGroups.get(item.group).push(item);
-    });
+    const assignments = [];
+    const meta = {
+      mode: 'anchor_slot_fixed',
+      vehicleCount: safeVehicles.length,
+      actualGroupCount: 0,
+      keptGroups: [],
+      overflowGroups: [],
+      evaluations: [],
+      totalSeatCapacity: safeVehicles.reduce((sum, v) => sum + Math.max(1, toNumber(v.seat_capacity, 4)), 0),
+      totalCastCount: safeItems.length,
+      capacityOverflowCount: 0,
+      capacityOverflowItems: [],
+      selectedAreas: []
+    };
 
-    const orderedOverallGroups = [...overallGroups.entries()]
-      .map(([group, rows]) => {
-        const sortedDesc = rows.slice().sort((a, b) => Number(b.distanceKm || 0) - Number(a.distanceKm || 0) || Number(a.id || 0) - Number(b.id || 0));
-        return {
-          group,
-          rows,
-          anchor: sortedDesc[0] || null,
-          count: rows.length
-        };
-      })
-      .sort((a, b) => Number(b.anchor?.distanceKm || 0) - Number(a.anchor?.distanceKm || 0) || Number(b.count || 0) - Number(a.count || 0) || String(a.group || '').localeCompare(String(b.group || ''), 'ja'));
+    [...itemsByHour.keys()].sort((a, b) => a - b).forEach(hour => {
+      const hourPeople = itemsByHour.get(hour) || [];
+      const result = buildHourAssignments(origin, safeVehicles, hourPeople);
+      meta.actualGroupCount += result.groups.length;
+      meta.evaluations.push(...result.evaluations);
 
-    const vehicleCount = Math.max(0, dispatchVehicles.length);
-    const keptOverallGroups = orderedOverallGroups.slice(0, vehicleCount);
-    const overflowOverallGroups = orderedOverallGroups.slice(vehicleCount);
-    const keptGroupSet = new Set(keptOverallGroups.map(entry => entry.group));
-    const overflowItemIdSet = new Set(
-      overflowOverallGroups.flatMap(entry => entry.rows.map(row => Number(row.id || 0)).filter(Boolean))
-    );
-
-    const totalSeatCapacity = dispatchVehicles.reduce((sum, vehicle) => sum + Math.max(1, Number(vehicle?.seat_capacity || 4)), 0);
-    const capacityOverflowCount = Math.max(0, itemRecords.length - totalSeatCapacity);
-    const capacityOverflowItems = capacityOverflowCount > 0
-      ? itemRecords
-          .slice()
-          .sort((a, b) => Number(a.distanceKm || 0) - Number(b.distanceKm || 0) || Number(a.id || 0) - Number(b.id || 0))
-          .slice(0, capacityOverflowCount)
-      : [];
-    const capacityOverflowIdSet = new Set(capacityOverflowItems.map(item => Number(item.id || 0)).filter(Boolean));
-    const dispatchableItemRecords = itemRecords.filter(item => !capacityOverflowIdSet.has(Number(item.id || 0)));
-
-    const evaluations = [];
-
-    const stateMap = new Map();
-    const ensureState = (vehicleId, hour) => {
-      const key = `${Number(vehicleId || 0)}__${Number(hour || 0)}`;
-      if (!stateMap.has(key)) {
-        stateMap.set(key, {
-          fixedRows: [],
-          addedRows: [],
-          fixedGroups: new Set(),
-          totalCount: 0
+      result.groups.forEach(group => {
+        const memberIds = (group.members || []).map(person => toNumber(person.id, 0)).filter(Boolean);
+        const orderedIds = (group.routeOrder || []).map(person => toNumber(person.id, 0)).filter(Boolean);
+        meta.keptGroups.push({
+          hour: toNumber(hour, 0),
+          groupId: String(group.groupId || ''),
+          vehicleId: toNumber(group.vehicleId, 0),
+          vehicleName: String(group.vehicleName || ''),
+          anchorId: toNumber(group.anchor?.id, 0),
+          anchorName: String(group.anchor?.name || ''),
+          anchorDistance: Number(group.anchor?.priorityDistance || 0),
+          anchorAngle: Number(group.anchor?.angleFromOrigin || 0),
+          count: (group.routeOrder || []).length,
+          itemIds: orderedIds,
+          memberIds,
+          routeDistance: Number(group.routeDistance || 0),
+          area: String(group.anchor?.destination_area || '')
         });
+        meta.selectedAreas.push(`${hour}:${String(group.anchor?.destination_area || '')}:${String(group.anchor?.name || '')}`);
+      });
+
+      if (result.overflow.length) {
+        meta.overflowGroups.push({
+          hour: toNumber(hour, 0),
+          group: `overflow_${hour}`,
+          count: result.overflow.length,
+          itemIds: result.overflow.map(person => toNumber(person.id, 0)).filter(Boolean)
+        });
+        meta.capacityOverflowCount += result.overflow.length;
+        meta.capacityOverflowItems.push(...result.overflow.map(person => ({
+          itemId: toNumber(person.id, 0),
+          hour: toNumber(hour, 0),
+          castName: String(person.name || ''),
+          distanceKm: Number(person.priorityDistance || 0),
+          area: String(person.destination_area || ''),
+          reason: 'no_available_capacity'
+        })));
       }
-      return stateMap.get(key);
-    };
 
-    const pushAssignment = (results, item, vehicleId) => {
-      results.push({
-        item_id: Number(item.id || 0),
-        vehicle_id: Number(vehicleId || 0),
-        actual_hour: Number(item.hour || 0),
-        distance_km: Number(item.distanceKm || 0)
-      });
-    };
-
-    pre.forEach(p => {
-      const rawItem = (items || []).find(x => Number(x?.id || 0) === Number(p?.item_id || 0));
-      if (!rawItem) return;
-      const item = {
-        raw: rawItem,
-        id: Number(rawItem.id || 0),
-        hour: Number(rawItem.actual_hour ?? rawItem.plan_hour ?? p.actual_hour ?? 0),
-        travelMinutes: Number(rawItem.travel_minutes || rawItem.casts?.travel_minutes || p.travel_minutes || 0),
-        distanceKm: Number(rawItem.distance_km || rawItem.casts?.distance_km || p.distance_km || 0),
-        area: normalizeArea(rawItem.destination_area || rawItem.cluster_area || rawItem.casts?.area || p.destination_area || ''),
-        canonical: canonicalArea(rawItem.destination_area || rawItem.cluster_area || rawItem.casts?.area || p.destination_area || ''),
-        group: displayGroup(rawItem.destination_area || rawItem.cluster_area || rawItem.casts?.area || p.destination_area || '')
-      };
-      const state = ensureState(Number(p.vehicle_id || 0), item.hour);
-      state.fixedRows.push(item);
-      if (item.group) state.fixedGroups.add(item.group);
-      state.totalCount += 1;
+      assignments.push(...buildAssignmentsFromGroups(result.groups, hour));
     });
 
-    const groupedByHour = new Map();
-    dispatchableItemRecords.forEach(item => {
-      if (!groupedByHour.has(item.hour)) groupedByHour.set(item.hour, []);
-      groupedByHour.get(item.hour).push(item);
+    if (invalidPeople.length) {
+      meta.capacityOverflowCount += invalidPeople.length;
+      meta.capacityOverflowItems.push(...invalidPeople.map(item => ({
+        itemId: toNumber(item?.id, 0),
+        hour: toNumber(item?.actual_hour ?? item?.plan_hour, 0),
+        castName: String(item?.casts?.name || item?.name || ''),
+        distanceKm: 0,
+        area: normalizeAreaLabel(item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || ''),
+        reason: 'missing_coordinates'
+      })));
+    }
+
+    globalThis.__THEMIS_LAST_OVERFLOW__ = meta;
+
+    return assignments.sort((a, b) => {
+      if (toNumber(a.actual_hour, 0) !== toNumber(b.actual_hour, 0)) return toNumber(a.actual_hour, 0) - toNumber(b.actual_hour, 0);
+      if (toNumber(a.vehicle_id, 0) !== toNumber(b.vehicle_id, 0)) return toNumber(a.vehicle_id, 0) - toNumber(b.vehicle_id, 0);
+      if (toNumber(a.stop_order, 0) !== toNumber(b.stop_order, 0)) return toNumber(a.stop_order, 0) - toNumber(b.stop_order, 0);
+      return toNumber(a.item_id, 0) - toNumber(b.item_id, 0);
     });
-
-    const vehicleBaseScore = (vehicle, item) => {
-      const vehicleArea = normalizeArea(vehicle?.vehicle_area || '');
-      const homeArea = normalizeArea(vehicle?.home_area || '');
-      const itemArea = item.area;
-
-      let score = 0;
-      score += areaAffinity(vehicleArea, itemArea) * 2.0;
-      score += areaAffinity(homeArea, itemArea) * 2.2;
-      score += Math.max(0, directionAffinity(vehicleArea, itemArea)) * 1.5;
-      score += Math.max(0, directionAffinity(homeArea, itemArea)) * 1.7;
-      score += strictHome(itemArea, homeArea) * 2.0;
-      if (isLastTripChecked(vehicle?.id) && displayGroup(homeArea) === item.group) score += 120;
-      return score;
-    };
-
-    const chooseDedicatedVehicles = (keptHourItems) => {
-      const groups = new Map();
-      keptHourItems.forEach(item => {
-        if (!groups.has(item.group)) groups.set(item.group, []);
-        groups.get(item.group).push(item);
-      });
-
-      const orderedGroups = [...groups.entries()]
-        .map(([group, rows]) => {
-          const sortedDesc = rows.slice().sort((a, b) => Number(b.distanceKm || 0) - Number(a.distanceKm || 0) || Number(a.id || 0) - Number(b.id || 0));
-          return { group, rows, anchor: sortedDesc[0] || null, count: rows.length };
-        })
-        .sort((a, b) => Number(b.anchor?.distanceKm || 0) - Number(a.anchor?.distanceKm || 0) || Number(b.count || 0) - Number(a.count || 0));
-
-      const dedicated = new Map();
-      const used = new Set();
-
-      orderedGroups.forEach(entry => {
-        let best = null;
-        dispatchVehicles.forEach(vehicle => {
-          const vid = Number(vehicle?.id || 0);
-          if (!vid || used.has(vid)) return;
-          let score = vehicleBaseScore(vehicle, entry.anchor || entry.rows[0] || {});
-          score -= Number(entry.count || 0) * 2;
-          if (!best || score > best.score) best = { vehicleId: vid, score };
-        });
-        if (best) {
-          used.add(best.vehicleId);
-          dedicated.set(entry.group, best.vehicleId);
-        }
-      });
-
-      return dedicated;
-    };
-
-    const results = [...pre];
-    const hourKeys = [...groupedByHour.keys()].sort((a, b) => a - b);
-
-    hourKeys.forEach(hour => {
-      const hourItems = groupedByHour.get(hour) || [];
-      const fixedHourItems = hourItems.filter(item => keptGroupSet.has(item.group));
-      const overflowHourItems = hourItems.filter(item => overflowItemIdSet.has(item.id));
-
-      const dedicatedVehicles = chooseDedicatedVehicles(fixedHourItems);
-
-      const fixedGroups = new Map();
-      fixedHourItems.forEach(item => {
-        if (!fixedGroups.has(item.group)) fixedGroups.set(item.group, []);
-        fixedGroups.get(item.group).push(item);
-      });
-
-      [...fixedGroups.entries()].forEach(([group, rows]) => {
-        const vehicleId = Number(dedicatedVehicles.get(group) || 0);
-        if (!vehicleId) return;
-        const state = ensureState(vehicleId, hour);
-        rows.slice()
-          .sort((a, b) => Number(a.distanceKm || 0) - Number(b.distanceKm || 0) || Number(a.id || 0) - Number(b.id || 0))
-          .forEach(item => {
-            pushAssignment(results, item, vehicleId);
-            state.fixedRows.push(item);
-            state.fixedGroups.add(item.group);
-            state.totalCount += 1;
-          });
-      });
-
-      overflowHourItems
-        .slice()
-        .sort((a, b) => Number(a.distanceKm || 0) - Number(b.distanceKm || 0) || Number(a.id || 0) - Number(b.id || 0))
-        .forEach(item => {
-          let best = null;
-          const itemEval = {
-            itemId: Number(item.id || 0),
-            castName: String(item.raw?.casts?.name || item.raw?.name || ''),
-            group: item.group,
-            area: item.area,
-            distanceKm: Number(item.distanceKm || 0),
-            hour: Number(item.hour || 0),
-            candidates: []
-          };
-
-          dispatchVehicles.forEach(vehicle => {
-            const vid = Number(vehicle?.id || 0);
-            if (!vid) return;
-            const seatCapacity = Math.max(1, Number(vehicle?.seat_capacity || 4));
-            const state = ensureState(vid, hour);
-            if (state.totalCount >= seatCapacity) {
-              itemEval.candidates.push({
-                vehicleId: vid,
-                vehicleName: String(vehicle?.driver_name || vehicle?.plate_number || `車両${vid}`),
-                excluded: true,
-                reason: 'seat_full'
-              });
-              return;
-            }
-
-            let maxReturnMinutes = 0;
-            let totalRoundTripKm = 0;
-            let targetRouteMinutes = 0;
-            let targetRouteKm = 0;
-            let targetOutboundMinutes = 0;
-            let targetReturnMinutes = 0;
-            let targetOutboundKm = 0;
-            let targetReturnKm = 0;
-
-            dispatchVehicles.forEach(worldVehicle => {
-              const worldVid = Number(worldVehicle?.id || 0);
-              if (!worldVid) return;
-              const worldState = ensureState(worldVid, hour);
-              const worldRows = [...worldState.fixedRows, ...worldState.addedRows];
-              if (worldVid === vid) worldRows.push(item);
-              const combinedRows = sortCandidateRows(worldRows);
-              const worldSummary = calcLegacyRoundTripSummary(combinedRows, worldVid);
-              const worldMinutes = Number(worldSummary.totalMinutes || 0);
-              const worldKm = Number(worldSummary.totalKm || 0);
-
-              if (worldMinutes > maxReturnMinutes) maxReturnMinutes = worldMinutes;
-              totalRoundTripKm += worldKm;
-
-              if (worldVid === vid) {
-                targetRouteMinutes = worldMinutes;
-                targetRouteKm = worldKm;
-                targetOutboundMinutes = Number(worldSummary.outboundMinutes || 0);
-                targetReturnMinutes = Number(worldSummary.returnMinutes || 0);
-                targetOutboundKm = Number(worldSummary.outboundKm || 0);
-                targetReturnKm = Number(worldSummary.returnKm || 0);
-              }
-            });
-
-            totalRoundTripKm = Number(totalRoundTripKm.toFixed(1));
-            const fixedGroupsList = [...state.fixedGroups.values()];
-            const candidate = {
-              vehicleId: vid,
-              vehicleName: String(vehicle?.driver_name || vehicle?.plate_number || `車両${vid}`),
-              maxReturnMinutes,
-              totalRoundTripKm,
-              routeMinutes: targetRouteMinutes,
-              routeKm: targetRouteKm,
-              outboundMinutes: targetOutboundMinutes,
-              returnMinutes: targetReturnMinutes,
-              outboundKm: targetOutboundKm,
-              returnKm: targetReturnKm,
-              seatCountAfter: state.totalCount + 1,
-              fixedGroups: fixedGroupsList,
-              model: 'legacy_segment_speed'
-            };
-            itemEval.candidates.push(candidate);
-
-            const better =
-              !best ||
-              maxReturnMinutes < best.maxReturnMinutes ||
-              (maxReturnMinutes === best.maxReturnMinutes && totalRoundTripKm < best.totalRoundTripKm) ||
-              (maxReturnMinutes === best.maxReturnMinutes && totalRoundTripKm === best.totalRoundTripKm && (state.totalCount + 1) < best.seatCountAfter) ||
-              (maxReturnMinutes === best.maxReturnMinutes && totalRoundTripKm === best.totalRoundTripKm && (state.totalCount + 1) === best.seatCountAfter && vid < best.vehicleId);
-
-            if (better) {
-              best = {
-                vehicleId: vid,
-                maxReturnMinutes,
-                totalRoundTripKm,
-                seatCountAfter: state.totalCount + 1,
-                routeMinutes: targetRouteMinutes,
-                routeKm: targetRouteKm
-              };
-            }
-          });
-
-          if (best) {
-            const state = ensureState(best.vehicleId, hour);
-            state.addedRows.push(item);
-            state.totalCount += 1;
-            pushAssignment(results, item, best.vehicleId);
-            itemEval.selectedVehicleId = best.vehicleId;
-            itemEval.selectedMaxReturnMinutes = best.maxReturnMinutes;
-            itemEval.selectedTotalRoundTripKm = best.totalRoundTripKm;
-            itemEval.selectedSeatCountAfter = best.seatCountAfter;
-            itemEval.selectedRouteMinutes = best.routeMinutes;
-            itemEval.selectedRouteKm = best.routeKm;
-          } else {
-            itemEval.unassigned = true;
-          }
-
-          evaluations.push(itemEval);
-        });
-    });
-
-    const assignedIds = new Set(results.map(row => Number(row.item_id || 0)).filter(Boolean));
-    const unresolvedOverflowGroups = overflowOverallGroups
-      .map(entry => {
-        const unresolvedIds = entry.rows.map(row => Number(row.id || 0)).filter(id => !assignedIds.has(id));
-        return unresolvedIds.length ? {
-          group: entry.group,
-          distanceKm: Number(entry.anchor?.distanceKm || 0),
-          count: unresolvedIds.length,
-          itemIds: unresolvedIds
-        } : null;
-      })
-      .filter(Boolean);
-
-    g.__THEMIS_LAST_OVERFLOW__ = {
-      mode: 'fixed_append',
-      vehicleCount,
-      actualGroupCount: orderedOverallGroups.length,
-      keptGroups: keptOverallGroups.map(entry => ({
-        group: entry.group,
-        distanceKm: Number(entry.anchor?.distanceKm || 0),
-        count: Number(entry.count || 0)
-      })),
-      overflowGroups: unresolvedOverflowGroups,
-      evaluations,
-      totalSeatCapacity,
-      totalCastCount: itemRecords.length,
-      capacityOverflowCount,
-      capacityOverflowItems: capacityOverflowItems.map(item => ({
-        itemId: Number(item.id || 0),
-        hour: Number(item.hour || 0),
-        castName: String(item.raw?.casts?.name || item.raw?.name || ''),
-        distanceKm: Number(item.distanceKm || 0),
-        group: item.group,
-        area: item.area,
-        reason: 'capacity_overflow'
-      }))
-    };
-
-    return results;
   }
-};
+
+  return {
+    optimizeAssignments,
+    pureOptimizeAssignments: optimizeAssignments,
+    selectAnchors
+  };
+})();

@@ -3404,41 +3404,29 @@ function __buildAssignmentsPreserveDisplayGroups(items, vehicles, monthlyMap) {
 
 async function assignUnassignedActualsForToday() {
   const selectedVehicles = getSelectedVehiclesForToday();
-  if (!selectedVehicles.length) return;
+  if (!selectedVehicles.length) return [];
 
   const unassignedItems = currentActualsCache.filter(item => {
     const status = normalizeStatus(item.status);
-    if (status === "cancel") return false;
+    if (status === "cancel" || status === "done") return false;
     if (Number(item.vehicle_id || 0) > 0) return false;
     return true;
   });
 
-  if (!unassignedItems.length) return;
+  if (!unassignedItems.length) return [];
 
   const monthlyMap = buildMonthlyDistanceMapForCurrentMonth();
-  let assignments = optimizeAssignments(unassignedItems, selectedVehicles, monthlyMap);
-  if (!Array.isArray(assignments)) assignments = [];
-
-  assignments = resolveCapacityOverflowLocally(
-    assignments,
-    unassignedItems,
-    selectedVehicles,
-    monthlyMap
-  );
-
-  if ((!Array.isArray(assignments) || !assignments.length) && typeof __buildEmergencyAssignments === "function") {
-    assignments = __buildEmergencyAssignments(unassignedItems, selectedVehicles);
-    assignments = resolveCapacityOverflowLocally(
-      assignments,
-      unassignedItems,
-      selectedVehicles,
-      monthlyMap
-    );
+  let assignments = [];
+  try {
+    assignments = callDispatchCoreSafe(unassignedItems, selectedVehicles, monthlyMap, {});
+  } catch (error) {
+    console.error("assignUnassignedActualsForToday optimize error:", error);
+    assignments = [];
   }
 
-  if (!assignments.length) return;
-
+  if (!Array.isArray(assignments) || !assignments.length) return [];
   await applyAutoDispatchAssignments(assignments);
+  return assignments;
 }
 
 function __buildEmergencyAssignments(activeItems, selectedVehicles) {
@@ -3956,37 +3944,7 @@ function __overflowFinalizeAssignments(assignments, items, vehicles) {
 }
 
 function resolveCapacityOverflowLocally(assignments, items, vehicles, monthlyMap) {
-  if (!Array.isArray(assignments) || !assignments.length) return Array.isArray(assignments) ? assignments : [];
-
-  let working = assignments.map(a => ({ ...a }));
-  let ctx = __overflowBuildContext(working, items, vehicles);
-  const buckets = __overflowFindBuckets(ctx);
-
-  if (!buckets.length) return working;
-
-  buckets.forEach(bucket => {
-    ctx = __overflowBuildContext(working, items, vehicles);
-    const sourceRows = ctx.vehicleHourRowsMap.get(bucket.key) || [];
-    const overflowRows = __overflowSelectRows(sourceRows, bucket.overCount, ctx);
-
-    overflowRows.forEach(movingAssignment => {
-      ctx = __overflowBuildContext(working, items, vehicles);
-      const best = __overflowChooseBestTarget(ctx, movingAssignment, bucket, vehicles, monthlyMap);
-      if (!best) return;
-
-      working = __overflowApplyMove(
-        working,
-        movingAssignment,
-        bucket,
-        best.vehicleId,
-        items,
-        vehicles
-      );
-    });
-  });
-
-  working = __overflowFinalizeAssignments(working, items, vehicles);
-  return working;
+  return Array.isArray(assignments) ? assignments : [];
 }
 
 /* ===== THEMIS overflow local resolver end ===== */
@@ -3997,7 +3955,7 @@ async function runAutoDispatch() {
     : [];
   if (!selectedVehicles.length) {
     alert("可能車両を選択してください");
-    return;
+    return [];
   }
 
   const activeItems = Array.isArray(getActiveDispatchItemsForAutoAssign())
@@ -4005,75 +3963,22 @@ async function runAutoDispatch() {
     : [];
   if (!activeItems.length) {
     alert("自動配車対象のActualがありません");
-    return;
+    return [];
   }
 
-  lastAutoDispatchRunAtMinutes = getCurrentClockMinutes();
   const monthlyMap = buildMonthlyDistanceMapForCurrentMonth();
   let assignments = [];
-
   try {
-    assignments = optimizeAssignments(activeItems, selectedVehicles, monthlyMap);
-    if (!Array.isArray(assignments)) assignments = [];
-
-    assignments = resolveCapacityOverflowLocally(
-      assignments,
-      activeItems,
-      selectedVehicles,
-      monthlyMap
-    );
+    assignments = callDispatchCoreSafe(activeItems, selectedVehicles, monthlyMap, {});
   } catch (error) {
-    console.error("runAutoDispatch main pipeline error:", error);
-    assignments = [];
+    console.error("runAutoDispatch optimize error:", error);
+    alert(`自動配車エラー: ${error.message}`);
+    return [];
   }
 
-  if ((!Array.isArray(assignments) || !assignments.length) && typeof __buildEmergencyAssignments === "function") {
-    try {
-      assignments = __buildEmergencyAssignments(activeItems, selectedVehicles);
-      assignments = resolveCapacityOverflowLocally(
-        assignments,
-        activeItems,
-        selectedVehicles,
-        monthlyMap
-      );
-    } catch (fallbackError) {
-      console.error("runAutoDispatch emergency fallback error:", fallbackError);
-      assignments = [];
-    }
-  }
-
-  if (!Array.isArray(assignments)) assignments = [];
-
-  const finalAssignedItemIds = new Set(assignments.map(a => Number(a?.item_id || 0)).filter(Boolean));
-  const overflowMeta = window.__THEMIS_LAST_OVERFLOW__ || null;
-  const overflowItemIds = new Set(
-    Array.isArray(overflowMeta?.overflowGroups)
-      ? overflowMeta.overflowGroups.flatMap(group => Array.isArray(group?.itemIds) ? group.itemIds.map(id => Number(id || 0)) : []).filter(Boolean)
-      : []
-  );
-  const finalUnassignedItems = activeItems.filter(item => !finalAssignedItemIds.has(Number(item?.id || 0)));
-  const finalUnassignedCount = finalUnassignedItems.length;
-  const hasUnexpectedUnassigned = finalUnassignedItems.some(item => !overflowItemIds.has(Number(item?.id || 0)));
-
-  if (!assignments.length && !overflowItemIds.size) {
-    console.error("auto dispatch incomplete", {
-      totalItems: activeItems.length,
-      assignedCount: finalAssignedItemIds.size,
-      unassignedCount: finalUnassignedCount
-    });
-    alert("自動配車に失敗しました");
-    return;
-  }
-
-  if (hasUnexpectedUnassigned) {
-    console.error("auto dispatch incomplete", {
-      totalItems: activeItems.length,
-      assignedCount: finalAssignedItemIds.size,
-      unassignedCount: finalUnassignedCount,
-      overflowCount: overflowItemIds.size
-    });
-    alert("自動配車に失敗しました");
-    return;
+  if (!Array.isArray(assignments) || !assignments.length) {
+    alert("配車結果がありません");
+    return [];
   }
 
   try {
@@ -4081,7 +3986,7 @@ async function runAutoDispatch() {
   } catch (error) {
     console.error(error);
     alert(`配車更新エラー: ${error.message}`);
-    return;
+    return [];
   }
 
   await addHistory(currentDispatchId, null, "auto_dispatch", "自動配車を実行");
@@ -4089,6 +3994,7 @@ async function runAutoDispatch() {
   await loadPlansByDate(els.planDate?.value || todayStr());
   renderDailyDispatchResult();
   scrollToDispatchResult();
+  return assignments;
 }
 
 function scrollToDispatchResult() {
@@ -4480,14 +4386,14 @@ function buildDailyDispatchVehicleCards(vehicles, activeItems, monthlyMap) {
         const bh = Number(b.actual_hour ?? 0);
         if (ah !== bh) return ah - bh;
 
-        const aa = normalizeAreaLabel(a.destination_area || "");
-        const ba = normalizeAreaLabel(b.destination_area || "");
-        if (aa !== ba) return aa.localeCompare(ba, "ja");
+        const ao = Number(a.stop_order || 0);
+        const bo = Number(b.stop_order || 0);
+        if (ao !== bo) return ao - bo;
 
-        return Number(a.stop_order || 0) - Number(b.stop_order || 0);
+        return Number(a.id || 0) - Number(b.id || 0);
       });
 
-    const orderedRows = moveManualLastItemsToEnd(sortItemsByNearestRoute(rows));
+    const orderedRows = [...rows];
     return { vehicle, rows, orderedRows };
   });
 }
@@ -7459,184 +7365,17 @@ window.renderDailyDispatchResult = function(){
 /* ===== THEMIS v6.9.13 drop-order unify hotfix end ===== */
 
 
-// ===== THEMIS field trial compatibility shim =====
-
-function __themisNormalizeStrictAreaLabel(area) {
-  return normalizeAreaLabel(area || "");
-}
-
-function __themisGetStrictAreaKeyFromItem(item) {
-  const area = __themisNormalizeStrictAreaLabel(
-    item?.destination_area || item?.cluster_area || item?.planned_area || item?.casts?.area || ""
-  );
-  const displayGroup = typeof getAreaDisplayGroup === "function"
-    ? (getAreaDisplayGroup(area) || area)
-    : area;
-  return __themisNormalizeStrictAreaLabel(displayGroup);
-}
-
-function __themisGetStrictAreaKeyFromAssignment(assignment, itemMap) {
-  const item = itemMap.get(Number(assignment?.item_id || 0));
-  return __themisGetStrictAreaKeyFromItem(item || assignment || {});
-}
-
-function __themisHasEnoughVehiclesForStrictAreaLayer(items, vehicles) {
-  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
-  const safeVehicles = Array.isArray(vehicles) ? vehicles.filter(Boolean) : [];
-  if (!safeItems.length || !safeVehicles.length) return false;
-
-  const hourAreaMap = new Map();
-  safeItems.forEach(item => {
-    const hour = Number(item?.actual_hour ?? item?.plan_hour ?? 0);
-    const areaKey = __themisGetStrictAreaKeyFromItem(item);
-    if (!areaKey || areaKey === "無し") return;
-    if (!hourAreaMap.has(hour)) hourAreaMap.set(hour, new Set());
-    hourAreaMap.get(hour).add(areaKey);
-  });
-
-  if (!hourAreaMap.size) return false;
-  for (const areaSet of hourAreaMap.values()) {
-    if (areaSet.size > safeVehicles.length) return false;
-  }
-  return true;
-}
-
-function __themisGetStrictAreaVehicleScore(vehicle, areaKey, monthlyMap) {
-  const month = monthlyMap?.get?.(Number(vehicle?.id || 0)) || { totalDistance: 0, avgDistance: 0, workedDays: 0 };
-  let score = 0;
-  if (typeof getVehicleAreaMatchScore === "function") {
-    score += Number(getVehicleAreaMatchScore(vehicle, areaKey) || 0) * 3.2;
-  }
-  if (typeof getStrictHomeCompatibilityScore === "function") {
-    score += Number(getStrictHomeCompatibilityScore(areaKey, vehicle?.home_area || "") || 0) * 2.6;
-  }
-  if (typeof getDirectionAffinityScore === "function") {
-    score += Math.max(0, Number(getDirectionAffinityScore(areaKey, vehicle?.home_area || "") || 0)) * 1.2;
-    score += Math.max(0, Number(getDirectionAffinityScore(areaKey, vehicle?.vehicle_area || "") || 0)) * 0.9;
-  }
-  if (typeof getAreaAffinityScore === "function") {
-    score += Number(getAreaAffinityScore(areaKey, vehicle?.home_area || "") || 0) * 0.9;
-    score += Number(getAreaAffinityScore(areaKey, vehicle?.vehicle_area || "") || 0) * 0.7;
-  }
-  score -= Number(month.totalDistance || 0) * 0.02;
-  score -= Number(month.avgDistance || 0) * 0.12;
-  if (typeof isDriverLastTripChecked === "function" && isDriverLastTripChecked(Number(vehicle?.id || 0))) {
-    score -= 12;
-  }
-  return score;
-}
-
-function __themisBuildAssignmentsPreserveStrictAreas(items, vehicles, monthlyMap) {
-  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
-  const safeVehicles = Array.isArray(vehicles) ? vehicles.filter(Boolean) : [];
-  if (!safeItems.length || !safeVehicles.length) return [];
-
-  const assignments = [];
-  const byHour = new Map();
-  safeItems.forEach(item => {
-    const hour = Number(item?.actual_hour ?? item?.plan_hour ?? 0);
-    if (!byHour.has(hour)) byHour.set(hour, []);
-    byHour.get(hour).push(item);
-  });
-
-  const hours = [...byHour.keys()].sort((a, b) => a - b);
-  for (const hour of hours) {
-    const hourItems = byHour.get(hour) || [];
-    const byArea = new Map();
-    hourItems.forEach(item => {
-      const areaKey = __themisGetStrictAreaKeyFromItem(item);
-      if (!byArea.has(areaKey)) byArea.set(areaKey, []);
-      byArea.get(areaKey).push(item);
-    });
-
-    const areaEntries = [...byArea.entries()].map(([areaKey, rows]) => ({
-      areaKey,
-      rows: rows.slice(),
-      anchor: rows.slice().sort((a, b) => Number(b?.distance_km || 0) - Number(a?.distance_km || 0) || Number(a?.id || 0) - Number(b?.id || 0))[0] || null,
-      count: rows.length
-    })).sort((a, b) => {
-      const ad = Number(a.anchor?.distance_km || 0);
-      const bd = Number(b.anchor?.distance_km || 0);
-      if (bd !== ad) return bd - ad;
-      if (b.count !== a.count) return b.count - a.count;
-      return String(a.areaKey || "").localeCompare(String(b.areaKey || ""), "ja");
-    });
-
-    const usedVehicleIds = new Set();
-    const dedicatedMap = new Map();
-
-    areaEntries.forEach(entry => {
-      let bestVehicle = null;
-      let bestScore = -Infinity;
-      safeVehicles.forEach(vehicle => {
-        const vehicleId = Number(vehicle?.id || 0);
-        if (!vehicleId || usedVehicleIds.has(vehicleId)) return;
-        const score = __themisGetStrictAreaVehicleScore(vehicle, entry.areaKey, monthlyMap);
-        if (score > bestScore) {
-          bestVehicle = vehicle;
-          bestScore = score;
-        }
-      });
-      if (bestVehicle) {
-        const vehicleId = Number(bestVehicle.id || 0);
-        usedVehicleIds.add(vehicleId);
-        dedicatedMap.set(entry.areaKey, bestVehicle);
-      }
-    });
-
-    if (dedicatedMap.size !== areaEntries.length) {
-      return [];
-    }
-
-    areaEntries.forEach(entry => {
-      const vehicle = dedicatedMap.get(entry.areaKey);
-      const vehicleId = Number(vehicle?.id || 0);
-      const orderedRows = typeof sortItemsByNearestRoute === "function"
-        ? sortItemsByNearestRoute(entry.rows)
-        : entry.rows.slice().sort((a, b) => Number(a?.distance_km || 0) - Number(b?.distance_km || 0) || Number(a?.id || 0) - Number(b?.id || 0));
-      orderedRows.forEach((row, index) => {
-        assignments.push({
-          item_id: Number(row?.id || 0),
-          actual_hour: hour,
-          vehicle_id: vehicleId,
-          driver_name: vehicle?.driver_name || "",
-          distance_km: Number(row?.distance_km || row?.casts?.distance_km || 0),
-          stop_order: index + 1,
-          strict_area_key: entry.areaKey
-        });
-      });
-    });
-  }
-
-  return assignments;
-}
+// ===== THEMIS dispatchCore isolated bridge =====
 
 function optimizeAssignments(items, vehicles, monthlyMap, options = {}) {
-  if (!window.DispatchCore || typeof window.DispatchCore.optimizeAssignments !== 'function') {
-    console.error('DispatchCore.optimizeAssignments is not available');
-    return [];
-  }
-  const safeItems = Array.isArray(items) ? items : [];
-  const safeVehicles = Array.isArray(vehicles)
-    ? vehicles
-    : (vehicles && typeof vehicles === 'object')
-      ? Object.values(vehicles)
-      : [];
-  const safeMonthlyMap = monthlyMap instanceof Map ? monthlyMap : new Map();
-
-  const useStrictAreaLayer = !options?.preAssignedAssignments && __themisHasEnoughVehiclesForStrictAreaLayer(safeItems, safeVehicles);
-  if (useStrictAreaLayer) {
-    const strictAssignments = __themisBuildAssignmentsPreserveStrictAreas(safeItems, safeVehicles, safeMonthlyMap);
-    if (Array.isArray(strictAssignments) && strictAssignments.length === safeItems.length) {
-      return strictAssignments;
-    }
-  }
-
-  return window.DispatchCore.optimizeAssignments(safeItems, safeVehicles, safeMonthlyMap, options || {});
+  return callDispatchCoreSafe(items, vehicles, monthlyMap, options);
 }
 
 function callDispatchCoreSafe(items, vehicles, monthlyMap, options = {}) {
-  return optimizeAssignments(items, vehicles, monthlyMap, options);
+  if (window.DispatchCore && typeof window.DispatchCore.optimizeAssignments === "function") {
+    return window.DispatchCore.optimizeAssignments(items, vehicles, monthlyMap, options);
+  }
+  return [];
 }
 
 function runSimulationDispatchPreview() {
@@ -7954,3 +7693,46 @@ function __logOverflowDebug(entry){
   window.__overflowDebugLogs.push(entry);
   console.log('[OVERFLOW DEBUG]', entry);
 }
+
+/* ===== THEMIS pure-dispatch isolation overrides ===== */
+(function(){
+  function __themisPureOrderRows(items){
+    const rows = Array.isArray(items) ? items.slice() : [];
+    return rows.sort((a, b) => {
+      const ah = Number(a?.actual_hour ?? a?.plan_hour ?? 0);
+      const bh = Number(b?.actual_hour ?? b?.plan_hour ?? 0);
+      if (ah !== bh) return ah - bh;
+
+      const aVehicle = Number(a?.vehicle_id || 0);
+      const bVehicle = Number(b?.vehicle_id || 0);
+      if (aVehicle !== bVehicle) return aVehicle - bVehicle;
+
+      const aStop = Number(a?.stop_order || 0);
+      const bStop = Number(b?.stop_order || 0);
+      if (aStop > 0 || bStop > 0) {
+        if (aStop !== bStop) return aStop - bStop;
+      }
+
+      const ad = Number(a?.distance_km ?? a?.casts?.distance_km ?? 0);
+      const bd = Number(b?.distance_km ?? b?.casts?.distance_km ?? 0);
+      if (ad !== bd) return ad - bd;
+
+      return Number(a?.id || 0) - Number(b?.id || 0);
+    });
+  }
+
+  if (typeof window !== 'undefined') {
+    window.__THEMIS_PURE_DISPATCH_MODE__ = true;
+  }
+
+  __hasEnoughVehiclesForDisplayGroups = function(){ return false; };
+  __buildAssignmentsPreserveDisplayGroups = function(){ return []; };
+  __buildEmergencyAssignments = function(){ return []; };
+  resolveCapacityOverflowLocally = function(assignments){
+    return Array.isArray(assignments) ? assignments : [];
+  };
+  sortItemsByNearestRoute = function(items){
+    return __themisPureOrderRows(items);
+  };
+})();
+/* ===== /THEMIS pure-dispatch isolation overrides ===== */
